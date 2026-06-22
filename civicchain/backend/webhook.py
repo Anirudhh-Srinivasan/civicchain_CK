@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from fastapi import FastAPI, HTTPException, Request
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 
@@ -27,12 +28,22 @@ SUBMIT_COMPLAINT_DISCRIMINATOR = hashlib.sha256(
 ).digest()[:8]
 
 app = FastAPI(title="CivicChain Backend")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 class ManualComplaintRequest(BaseModel):
     title: str
     description: str
     location: str
+    category: str | None = None
+    citizen_pubkey: str | None = None
+    photo_url: str | None = None
 
 
 class VerifyRequest(BaseModel):
@@ -90,6 +101,15 @@ def init_db() -> None:
                 title TEXT NOT NULL,
                 description TEXT NOT NULL,
                 location TEXT NOT NULL,
+                category TEXT DEFAULT 'pothole',
+                status TEXT DEFAULT 'Open',
+                photo_url TEXT,
+                estimated_fund REAL DEFAULT 0,
+                bid_amount REAL,
+                contractor_pubkey TEXT,
+                ai_confidence REAL,
+                ai_reasoning TEXT,
+                payment_released INTEGER DEFAULT 0,
                 signature TEXT,
                 slot INTEGER,
                 raw_transaction TEXT,
@@ -97,6 +117,23 @@ def init_db() -> None:
             )
             """
         )
+        existing_columns = {
+            row["name"] for row in conn.execute("PRAGMA table_info(complaints)")
+        }
+        migrations = {
+            "category": "ALTER TABLE complaints ADD COLUMN category TEXT DEFAULT 'pothole'",
+            "status": "ALTER TABLE complaints ADD COLUMN status TEXT DEFAULT 'Open'",
+            "photo_url": "ALTER TABLE complaints ADD COLUMN photo_url TEXT",
+            "estimated_fund": "ALTER TABLE complaints ADD COLUMN estimated_fund REAL DEFAULT 0",
+            "bid_amount": "ALTER TABLE complaints ADD COLUMN bid_amount REAL",
+            "contractor_pubkey": "ALTER TABLE complaints ADD COLUMN contractor_pubkey TEXT",
+            "ai_confidence": "ALTER TABLE complaints ADD COLUMN ai_confidence REAL",
+            "ai_reasoning": "ALTER TABLE complaints ADD COLUMN ai_reasoning TEXT",
+            "payment_released": "ALTER TABLE complaints ADD COLUMN payment_released INTEGER DEFAULT 0",
+        }
+        for column, statement in migrations.items():
+            if column not in existing_columns:
+                conn.execute(statement)
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_complaints_pubkey ON complaints(complaint_pubkey)"
         )
@@ -115,6 +152,15 @@ def row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
         "title": row["title"],
         "description": row["description"],
         "location": row["location"],
+        "category": row["category"],
+        "status": row["status"],
+        "photo_url": row["photo_url"],
+        "estimated_fund": row["estimated_fund"],
+        "bid_amount": row["bid_amount"],
+        "contractor_pubkey": row["contractor_pubkey"],
+        "ai_confidence": row["ai_confidence"],
+        "ai_reasoning": row["ai_reasoning"],
+        "payment_released": bool(row["payment_released"]),
         "signature": row["signature"],
         "slot": row["slot"],
         "created_at": row["created_at"],
@@ -329,11 +375,14 @@ async def helius_webhook(request: Request) -> dict[str, Any]:
                         title,
                         description,
                         location,
+                        category,
+                        status,
+                        estimated_fund,
                         signature,
                         slot,
                         raw_transaction
                     )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         complaint["complaint_pubkey"],
@@ -341,6 +390,9 @@ async def helius_webhook(request: Request) -> dict[str, Any]:
                         complaint["title"],
                         complaint["description"],
                         complaint["location"],
+                        "pothole",
+                        "Open",
+                        0,
                         complaint["signature"],
                         complaint["slot"],
                         complaint["raw_transaction"],
@@ -395,18 +447,26 @@ def create_complaint(request: ManualComplaintRequest) -> dict[str, Any]:
                 title,
                 description,
                 location,
+                category,
+                status,
+                photo_url,
+                estimated_fund,
                 signature,
                 slot,
                 raw_transaction
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 complaint_pubkey,
-                None,
+                request.citizen_pubkey,
                 request.title,
                 request.description,
                 request.location,
+                request.category or "pothole",
+                "Open",
+                request.photo_url,
+                0,
                 None,
                 None,
                 json.dumps({"source": "manual"}),
