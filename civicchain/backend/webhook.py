@@ -6,14 +6,22 @@ import hashlib
 import json
 import sqlite3
 import struct
+import sys
+import uuid
 from pathlib import Path
 from typing import Any, Iterable
 
 from fastapi import FastAPI, HTTPException, Request
+from pydantic import BaseModel
 
 
 PROGRAM_ID = "12D76ecL7prNejn2PgyAebvrF5FrKpnY7ABNW5Zm2Qrm"
 DB_PATH = Path(__file__).with_name("complaints.db")
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+AI_BACKEND_PATHS = (
+    PROJECT_ROOT / "ai-backend",
+    PROJECT_ROOT.parent / "ai-backend",
+)
 SUBMIT_COMPLAINT_DISCRIMINATOR = hashlib.sha256(
     b"global:submit_complaint"
 ).digest()[:8]
@@ -21,10 +29,54 @@ SUBMIT_COMPLAINT_DISCRIMINATOR = hashlib.sha256(
 app = FastAPI(title="CivicChain Backend")
 
 
+class ManualComplaintRequest(BaseModel):
+    title: str
+    description: str
+    location: str
+
+
+class VerifyRequest(BaseModel):
+    complaint_text: str
+    before_image_path: str
+    after_image_path: str
+    complaint_pubkey: str
+    bid_pubkey: str
+    escrow_pubkey: str
+    contractor_pubkey: str
+
+
 def get_db() -> sqlite3.Connection:
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     return conn
+
+
+def load_ai_workflow():
+    for path in AI_BACKEND_PATHS:
+        if path.exists() and str(path) not in sys.path:
+            sys.path.insert(0, str(path))
+
+    try:
+        from ai_verifier import run_ai_workflow
+    except ImportError as exc:
+        raise HTTPException(
+            status_code=500,
+            detail="AI backend not found. Expected ai_verifier.py in ai-backend/.",
+        ) from exc
+
+    return run_ai_workflow
+
+
+def load_release_payment():
+    try:
+        from backend.escrow import release_payment
+    except ImportError as exc:
+        raise HTTPException(
+            status_code=500,
+            detail="Escrow backend unavailable. Check backend/escrow.py dependencies.",
+        ) from exc
+
+    return release_payment
 
 
 def init_db() -> None:
@@ -297,6 +349,78 @@ async def helius_webhook(request: Request) -> dict[str, Any]:
                 saved += cursor.rowcount if cursor.rowcount > 0 else 0
 
     return {"ok": True, "saved": saved}
+
+
+@app.post("/verify")
+def verify_complaint(request: VerifyRequest) -> dict[str, Any]:
+    run_ai_workflow = load_ai_workflow()
+    ai_result = run_ai_workflow(
+        request.complaint_text,
+        request.before_image_path,
+        request.after_image_path,
+    )
+
+    should_release = bool(
+        ai_result.get("fund_decision", {}).get("release_payment")
+    )
+    payment_signature = None
+
+    if should_release:
+        release_payment = load_release_payment()
+        payment_signature = release_payment(
+            complaint_pubkey=request.complaint_pubkey,
+            bid_pubkey=request.bid_pubkey,
+            escrow_pubkey=request.escrow_pubkey,
+            contractor_pubkey=request.contractor_pubkey,
+        )
+
+    return {
+        "ai_result": ai_result,
+        "payment_released": should_release,
+        "payment_signature": payment_signature,
+    }
+
+
+@app.post("/complaint")
+def create_complaint(request: ManualComplaintRequest) -> dict[str, Any]:
+    init_db()
+    complaint_pubkey = f"manual:{uuid.uuid4()}"
+
+    with get_db() as conn:
+        cursor = conn.execute(
+            """
+            INSERT INTO complaints (
+                complaint_pubkey,
+                citizen_pubkey,
+                title,
+                description,
+                location,
+                signature,
+                slot,
+                raw_transaction
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                complaint_pubkey,
+                None,
+                request.title,
+                request.description,
+                request.location,
+                None,
+                None,
+                json.dumps({"source": "manual"}),
+            ),
+        )
+        row = conn.execute(
+            "SELECT * FROM complaints WHERE id = ?",
+            (cursor.lastrowid,),
+        ).fetchone()
+
+    if row is None:
+        raise HTTPException(status_code=500, detail="Complaint was not saved")
+
+    return row_to_dict(row)
 
 
 @app.get("/complaints")
