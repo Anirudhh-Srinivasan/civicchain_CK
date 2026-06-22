@@ -5,11 +5,11 @@ package_manager = "yarn"
 resolution = true
 skip-lint = false
 
-[programs.localnet]
-civicchain = "Hh6rbt3exyZL95JVsJqBBs2cLDZ5jD1LV2Rzh494Nbj6"
+[programs.devnet]
+civicchain = "12D76ecL7prNejn2PgyAebvrF5FrKpnY7ABNW5Zm2Qrm"
 
 [provider]
-cluster = "localnet"
+cluster = "devnet"
 wallet = "~/.config/solana/id.json"
 
 [scripts]
