@@ -1,13 +1,16 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, Route, Routes, useParams } from "react-router-dom";
 import { WalletMultiButton } from "@solana/wallet-adapter-react-ui";
 import { useWallet } from "@solana/wallet-adapter-react";
-import { Camera, FileText, Home, Map, Send } from "lucide-react";
+import { Camera, FileText, Home, Map, MapPin, Send } from "lucide-react";
 import ComplaintCard from "../components/ComplaintCard";
 import ComplaintMap from "../components/ComplaintMap";
 import PortalNav from "../components/PortalNav";
+import SessionBanner from "../components/SessionBanner";
 import { Card, EmptyState, ErrorState, Field, LoadingState, StatusBadge, inputClass } from "../components/ui";
 import { createComplaint, getComplaint, getComplaints, imageForCategory } from "../services/api";
+import { getSession } from "../services/auth";
+import { geocodeAddress } from "../services/geo";
 
 const links = [
   { to: "/citizen", label: "Report", icon: Home },
@@ -18,6 +21,7 @@ const links = [
 export default function CitizenPortal() {
   return (
     <div className="page-enter">
+      <SessionBanner role="citizen" />
       <PortalNav links={links} />
       <Routes>
         <Route index element={<CitizenHome />} />
@@ -31,6 +35,7 @@ export default function CitizenPortal() {
 
 function CitizenHome() {
   const { publicKey } = useWallet();
+  const session = getSession();
   const [form, setForm] = useState({ title: "", description: "", location: "", category: "pothole" });
   const [photoName, setPhotoName] = useState("");
   const [state, setState] = useState({ loading: false, error: "", saved: null });
@@ -39,9 +44,13 @@ function CitizenHome() {
     event.preventDefault();
     setState({ loading: true, error: "", saved: null });
     try {
+      const coordinates = await geocodeAddress(form.location);
       const saved = await createComplaint({
         ...form,
-        citizen_pubkey: publicKey?.toBase58() || null,
+        ...(coordinates
+          ? { latitude: coordinates.latitude, longitude: coordinates.longitude }
+          : {}),
+        citizen_pubkey: publicKey?.toBase58() || session?.id || null,
         photo_url: imageForCategory(form.category),
       });
       setForm({ title: "", description: "", location: "", category: "pothole" });
@@ -78,20 +87,27 @@ function CitizenHome() {
           <Field label="Description">
             <textarea className={inputClass} required rows="4" value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} />
           </Field>
-          <div className="grid gap-4 sm:grid-cols-2">
-            <Field label="Location">
-              <input className={inputClass} required placeholder="Anna Nagar, Chennai" value={form.location} onChange={(e) => setForm({ ...form, location: e.target.value })} />
-            </Field>
-            <Field label="Category">
-              <select className={inputClass} value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })}>
-                <option value="pothole">Pothole</option>
-                <option value="flooding">Flooding</option>
-                <option value="garbage">Garbage</option>
-                <option value="streetlight">Streetlight</option>
-                <option value="water leak">Water leak</option>
-              </select>
-            </Field>
-          </div>
+          <Field label="Address / Landmark">
+            <div className="relative">
+              <MapPin className="pointer-events-none absolute left-3 top-3.5 h-4 w-4 text-cyan" />
+              <input
+                className={`${inputClass} pl-10`}
+                required
+                placeholder="Example: 12 Main Road, near Anna Nagar Tower, Chennai"
+                value={form.location}
+                onChange={(e) => setForm({ ...form, location: e.target.value })}
+              />
+            </div>
+          </Field>
+          <Field label="Category">
+            <select className={inputClass} value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })}>
+              <option value="pothole">Pothole</option>
+              <option value="flooding">Flooding</option>
+              <option value="garbage">Garbage</option>
+              <option value="streetlight">Streetlight</option>
+              <option value="water leak">Water leak</option>
+            </select>
+          </Field>
           <Field label="Photo Upload">
             <label className="flex cursor-pointer items-center justify-between rounded-lg border border-dashed border-white/20 bg-navy/70 px-4 py-4 text-sm text-slate-300">
               <span className="inline-flex items-center gap-2">
@@ -114,8 +130,9 @@ function CitizenHome() {
 
 function CitizenComplaints() {
   const { publicKey } = useWallet();
+  const session = getSession();
   const { data, loading, error } = useComplaints();
-  const wallet = publicKey?.toBase58();
+  const wallet = publicKey?.toBase58() || session?.id;
   const visible = useMemo(
     () => (wallet ? data.filter((item) => !item.citizen_pubkey || item.citizen_pubkey === wallet) : data),
     [data, wallet],
@@ -174,12 +191,21 @@ export function DetailView({ complaint, back }) {
 
 export function useComplaints() {
   const [state, setState] = useState({ data: [], loading: true, error: "" });
-  useEffect(() => {
-    getComplaints()
-      .then((data) => setState({ data, loading: false, error: "" }))
-      .catch((error) => setState({ data: [], loading: false, error: error.message }));
+  const refresh = useCallback(async () => {
+    setState((current) => ({ ...current, loading: true, error: "" }));
+    try {
+      const data = await getComplaints();
+      setState({ data, loading: false, error: "" });
+      return data;
+    } catch (error) {
+      setState({ data: [], loading: false, error: error.message });
+      return [];
+    }
   }, []);
-  return state;
+  useEffect(() => {
+    refresh();
+  }, [refresh]);
+  return { ...state, refresh };
 }
 
 export function useComplaint(id) {

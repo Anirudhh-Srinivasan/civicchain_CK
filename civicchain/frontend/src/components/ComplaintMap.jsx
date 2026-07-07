@@ -32,7 +32,12 @@ export default function ComplaintMap({ complaints, detailBase = "/government/com
       {complaints.map((complaint) => (
         <Marker
           key={complaint.id}
-          position={coordinatesFor(complaint.location, complaint.id)}
+          position={coordinatesFor(
+            complaint.location,
+            complaint.id,
+            complaint.latitude,
+            complaint.longitude,
+          )}
           icon={marker(complaint.status)}
         >
           <Popup>

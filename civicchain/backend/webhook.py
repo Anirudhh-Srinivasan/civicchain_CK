@@ -30,7 +30,12 @@ SUBMIT_COMPLAINT_DISCRIMINATOR = hashlib.sha256(
 app = FastAPI(title="CivicChain Backend")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_origins=[
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+        "http://localhost:5174",
+        "http://127.0.0.1:5174",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -44,6 +49,8 @@ class ManualComplaintRequest(BaseModel):
     category: str | None = None
     citizen_pubkey: str | None = None
     photo_url: str | None = None
+    latitude: float | None = None
+    longitude: float | None = None
 
 
 class VerifyRequest(BaseModel):
@@ -54,6 +61,16 @@ class VerifyRequest(BaseModel):
     bid_pubkey: str
     escrow_pubkey: str
     contractor_pubkey: str
+
+
+class BidRequest(BaseModel):
+    amount: float
+    contractor_pubkey: str | None = None
+
+
+class ProofRequest(BaseModel):
+    before_image_name: str | None = None
+    after_image_name: str | None = None
 
 
 def get_db() -> sqlite3.Connection:
@@ -104,6 +121,8 @@ def init_db() -> None:
                 category TEXT DEFAULT 'pothole',
                 status TEXT DEFAULT 'Open',
                 photo_url TEXT,
+                latitude REAL,
+                longitude REAL,
                 estimated_fund REAL DEFAULT 0,
                 bid_amount REAL,
                 contractor_pubkey TEXT,
@@ -124,6 +143,8 @@ def init_db() -> None:
             "category": "ALTER TABLE complaints ADD COLUMN category TEXT DEFAULT 'pothole'",
             "status": "ALTER TABLE complaints ADD COLUMN status TEXT DEFAULT 'Open'",
             "photo_url": "ALTER TABLE complaints ADD COLUMN photo_url TEXT",
+            "latitude": "ALTER TABLE complaints ADD COLUMN latitude REAL",
+            "longitude": "ALTER TABLE complaints ADD COLUMN longitude REAL",
             "estimated_fund": "ALTER TABLE complaints ADD COLUMN estimated_fund REAL DEFAULT 0",
             "bid_amount": "ALTER TABLE complaints ADD COLUMN bid_amount REAL",
             "contractor_pubkey": "ALTER TABLE complaints ADD COLUMN contractor_pubkey TEXT",
@@ -155,6 +176,8 @@ def row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
         "category": row["category"],
         "status": row["status"],
         "photo_url": row["photo_url"],
+        "latitude": row["latitude"],
+        "longitude": row["longitude"],
         "estimated_fund": row["estimated_fund"],
         "bid_amount": row["bid_amount"],
         "contractor_pubkey": row["contractor_pubkey"],
@@ -450,12 +473,14 @@ def create_complaint(request: ManualComplaintRequest) -> dict[str, Any]:
                 category,
                 status,
                 photo_url,
+                latitude,
+                longitude,
                 estimated_fund,
                 signature,
                 slot,
                 raw_transaction
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 complaint_pubkey,
@@ -466,6 +491,8 @@ def create_complaint(request: ManualComplaintRequest) -> dict[str, Any]:
                 request.category or "pothole",
                 "Open",
                 request.photo_url,
+                request.latitude,
+                request.longitude,
                 0,
                 None,
                 None,
@@ -506,3 +533,87 @@ def get_complaint(complaint_id: int) -> dict[str, Any]:
         raise HTTPException(status_code=404, detail="Complaint not found")
 
     return row_to_dict(row)
+
+
+@app.post("/complaints/{complaint_id}/bid")
+def place_bid(complaint_id: int, request: BidRequest) -> dict[str, Any]:
+    init_db()
+    if request.amount <= 0:
+        raise HTTPException(status_code=400, detail="Bid amount must be greater than zero")
+
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT * FROM complaints WHERE id = ?",
+            (complaint_id,),
+        ).fetchone()
+        if row is None:
+            raise HTTPException(status_code=404, detail="Complaint not found")
+        if row["status"] not in ("Open", "Assigned"):
+            raise HTTPException(
+                status_code=400,
+                detail="Only open or assigned complaints can receive bids",
+            )
+
+        conn.execute(
+            """
+            UPDATE complaints
+            SET status = 'Assigned',
+                bid_amount = ?,
+                contractor_pubkey = ?,
+                estimated_fund = CASE WHEN estimated_fund > 0 THEN estimated_fund ELSE ? END
+            WHERE id = ?
+            """,
+            (
+                request.amount,
+                request.contractor_pubkey or "DemoContractorWallet",
+                request.amount,
+                complaint_id,
+            ),
+        )
+        updated = conn.execute(
+            "SELECT * FROM complaints WHERE id = ?",
+            (complaint_id,),
+        ).fetchone()
+
+    return row_to_dict(updated)
+
+
+@app.post("/complaints/{complaint_id}/proof")
+def submit_proof(complaint_id: int, request: ProofRequest) -> dict[str, Any]:
+    init_db()
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT * FROM complaints WHERE id = ?",
+            (complaint_id,),
+        ).fetchone()
+        if row is None:
+            raise HTTPException(status_code=404, detail="Complaint not found")
+        if row["status"] not in ("Assigned", "Completed", "Verified"):
+            raise HTTPException(
+                status_code=400,
+                detail="Proof can only be submitted after a bid is assigned",
+            )
+
+        reasoning = "Proof submitted and queued for AI verification."
+        if request.before_image_name and request.after_image_name:
+            reasoning = (
+                f"Proof submitted with before image '{request.before_image_name}' "
+                f"and after image '{request.after_image_name}'. Awaiting AI verification."
+            )
+
+        conn.execute(
+            """
+            UPDATE complaints
+            SET status = 'Completed',
+                ai_confidence = NULL,
+                ai_reasoning = ?
+            WHERE id = ?
+            """,
+            (reasoning, complaint_id),
+        )
+        updated = conn.execute(
+            "SELECT * FROM complaints WHERE id = ?",
+            (complaint_id,),
+        ).fetchone()
+
+    return row_to_dict(updated)

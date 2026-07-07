@@ -2,7 +2,7 @@ import { AlertCircle, Loader2 } from "lucide-react";
 
 export function Card({ children, className = "" }) {
   return (
-    <div className={`rounded-lg border border-white/10 bg-white/[0.045] shadow-glow ${className}`}>
+    <div className={`rounded-lg border border-white/10 bg-white/[0.055] shadow-glow ${className}`}>
       {children}
     </div>
   );
@@ -60,4 +60,4 @@ export function Field({ label, children }) {
 }
 
 export const inputClass =
-  "w-full rounded-lg border border-white/10 bg-navy/70 px-3 py-3 text-white outline-none transition focus:border-cyan";
+  "w-full rounded-lg border border-white/10 bg-navy/80 px-3 py-3 text-white outline-none transition placeholder:text-slate-600 focus:border-cyan focus:ring-2 focus:ring-cyan/15";

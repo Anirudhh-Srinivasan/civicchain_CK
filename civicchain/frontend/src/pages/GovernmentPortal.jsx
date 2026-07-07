@@ -3,6 +3,7 @@ import { Link, Route, Routes, useParams } from "react-router-dom";
 import { BarChart3, Coins, FileSearch, Map, Table2 } from "lucide-react";
 import ComplaintMap from "../components/ComplaintMap";
 import PortalNav from "../components/PortalNav";
+import SessionBanner from "../components/SessionBanner";
 import { Card, EmptyState, ErrorState, LoadingState, StatusBadge, inputClass } from "../components/ui";
 import { DetailView, useComplaint, useComplaints } from "./CitizenPortal";
 
@@ -16,6 +17,7 @@ const links = [
 export default function GovernmentPortal() {
   return (
     <div className="page-enter">
+      <SessionBanner role="government" />
       <PortalNav links={links} />
       <Routes>
         <Route index element={<Overview />} />
