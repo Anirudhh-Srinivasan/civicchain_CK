@@ -1,10 +1,14 @@
 import { useMemo, useState } from "react";
 import { Route, Routes } from "react-router-dom";
 import { WalletMultiButton } from "@solana/wallet-adapter-react-ui";
+import { useWallet } from "@solana/wallet-adapter-react";
 import { BriefcaseBusiness, CheckCircle2, LayoutDashboard, Upload } from "lucide-react";
 import ComplaintCard from "../components/ComplaintCard";
 import PortalNav from "../components/PortalNav";
+import SessionBanner from "../components/SessionBanner";
 import { Card, EmptyState, ErrorState, Field, LoadingState, inputClass } from "../components/ui";
+import { placeBid, submitProof } from "../services/api";
+import { getSession } from "../services/auth";
 import { useComplaints } from "./CitizenPortal";
 
 const links = [
@@ -14,35 +18,33 @@ const links = [
 ];
 
 export default function ContractorPortal() {
-  const [bids, setBids] = useState([]);
   return (
     <div className="page-enter">
-      <div className="mb-6 flex flex-col gap-4 rounded-lg border border-white/10 bg-white/[0.04] p-4 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <p className="text-sm font-bold uppercase tracking-[0.2em] text-cyan">Contractor Portal</p>
-          <h1 className="text-2xl font-black">Bid, execute, verify, get paid</h1>
-        </div>
+      <SessionBanner role="contractor" />
+      <div className="mb-6 flex justify-end">
         <WalletMultiButton />
       </div>
       <PortalNav links={links} />
       <Routes>
-        <Route index element={<Dashboard onBid={(bid) => setBids((items) => [bid, ...items])} />} />
-        <Route path="bids" element={<ActiveBids bids={bids} />} />
-        <Route path="proof" element={<ProofUpload bids={bids} />} />
+        <Route index element={<Dashboard />} />
+        <Route path="bids" element={<ActiveBids />} />
+        <Route path="proof" element={<ProofUpload />} />
       </Routes>
     </div>
   );
 }
 
-function Dashboard({ onBid }) {
-  const { data, loading, error } = useComplaints();
+function Dashboard() {
+  const { data, loading, error, refresh } = useComplaints();
   const [selected, setSelected] = useState(null);
+  const [notice, setNotice] = useState("");
   const open = data.filter((item) => item.status === "Open");
   if (loading) return <LoadingState />;
   if (error) return <ErrorState message={error} />;
   if (!open.length) return <EmptyState title="No open work orders" text="New citizen complaints will appear here for bidding." />;
   return (
     <>
+      {notice && <div className="mb-4 rounded-lg border border-success/30 bg-success/10 px-4 py-3 text-sm font-bold text-success">{notice}</div>}
       <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-3">
         {open.map((item) => (
           <ComplaintCard
@@ -57,24 +59,51 @@ function Dashboard({ onBid }) {
           />
         ))}
       </div>
-      {selected && <BidModal complaint={selected} onClose={() => setSelected(null)} onBid={onBid} />}
+      {selected && (
+        <BidModal
+          complaint={selected}
+          onClose={() => setSelected(null)}
+          onSaved={async (bid) => {
+            setNotice(`Bid submitted for ${bid.title}.`);
+            setSelected(null);
+            await refresh();
+          }}
+        />
+      )}
     </>
   );
 }
 
-function BidModal({ complaint, onClose, onBid }) {
+function BidModal({ complaint, onClose, onSaved }) {
+  const { publicKey } = useWallet();
+  const session = getSession();
   const [amount, setAmount] = useState(complaint.estimated_fund.toFixed(2));
+  const [state, setState] = useState({ loading: false, error: "" });
+  const submit = async () => {
+    setState({ loading: true, error: "" });
+    try {
+      const bid = await placeBid(complaint.id, {
+        amount: Number(amount),
+        contractor_pubkey: publicKey?.toBase58() || session?.id || "DemoContractorWallet",
+      });
+      setState({ loading: false, error: "" });
+      onSaved(bid);
+    } catch (error) {
+      setState({ loading: false, error: error.message });
+    }
+  };
   return (
     <div className="fixed inset-0 z-50 grid place-items-center bg-black/70 p-4">
       <Card className="w-full max-w-md p-6">
         <h2 className="text-xl font-black">Place Bid</h2>
         <p className="mt-2 text-sm text-slate-400">{complaint.title}</p>
         <Field label="Bid amount in SOL">
-          <input className={inputClass} type="number" step="0.01" value={amount} onChange={(e) => setAmount(e.target.value)} />
+          <input className={inputClass} min="0.01" type="number" step="0.01" value={amount} onChange={(e) => setAmount(e.target.value)} />
         </Field>
+        {state.error && <p className="mt-3 text-sm text-danger">{state.error}</p>}
         <div className="mt-5 flex gap-3">
-          <button className="rounded-lg bg-cyan px-4 py-2 font-black text-navy" onClick={() => { onBid({ ...complaint, bid_amount: Number(amount), status: "Assigned" }); onClose(); }}>
-            Submit Bid
+          <button className="rounded-lg bg-cyan px-4 py-2 font-black text-navy disabled:opacity-60" disabled={state.loading} onClick={submit}>
+            {state.loading ? "Submitting..." : "Submit Bid"}
           </button>
           <button className="rounded-lg border border-white/10 px-4 py-2 font-bold text-white" onClick={onClose}>
             Cancel
@@ -85,7 +114,11 @@ function BidModal({ complaint, onClose, onBid }) {
   );
 }
 
-function ActiveBids({ bids }) {
+function ActiveBids() {
+  const { data, loading, error } = useComplaints();
+  const bids = data.filter((item) => ["Assigned", "Completed", "Verified"].includes(item.status));
+  if (loading) return <LoadingState />;
+  if (error) return <ErrorState message={error} />;
   if (!bids.length) return <EmptyState title="No active bids" text="Bids placed from the dashboard are tracked here during the demo." />;
   return (
     <div className="grid gap-5 lg:grid-cols-2">
@@ -99,31 +132,71 @@ function ActiveBids({ bids }) {
             </div>
             <p className="text-2xl font-black text-success">{bid.bid_amount.toFixed(2)} SOL</p>
           </div>
-          <Tracker current={2} />
+          <Tracker current={trackerStep(bid.status)} />
         </Card>
       ))}
     </div>
   );
 }
 
-function ProofUpload({ bids }) {
-  const accepted = useMemo(() => bids[0], [bids]);
+function ProofUpload() {
+  const { data, loading, error, refresh } = useComplaints();
+  const jobs = useMemo(() => data.filter((item) => ["Assigned", "Completed"].includes(item.status)), [data]);
+  const [selectedId, setSelectedId] = useState("");
+  const [files, setFiles] = useState({ before: "", after: "" });
+  const [state, setState] = useState({ loading: false, error: "", saved: "" });
+  const accepted = jobs.find((job) => String(job.id) === String(selectedId)) || jobs[0];
+  const currentId = selectedId || accepted?.id || "";
+  const saveProof = async () => {
+    if (!currentId) return;
+    setState({ loading: true, error: "", saved: "" });
+    try {
+      const updated = await submitProof(currentId, {
+        before_image_name: files.before,
+        after_image_name: files.after,
+      });
+      setFiles({ before: "", after: "" });
+      setState({ loading: false, error: "", saved: `Proof submitted for ${updated.title}.` });
+      await refresh();
+    } catch (error) {
+      setState({ loading: false, error: error.message, saved: "" });
+    }
+  };
+  if (loading) return <LoadingState />;
+  if (error) return <ErrorState message={error} />;
   return (
     <Card className="mx-auto max-w-3xl p-6">
       <h2 className="text-2xl font-black">Upload Work Proof</h2>
       <p className="mt-2 text-sm text-slate-400">{accepted ? accepted.title : "Select an accepted job before uploading proof."}</p>
+      {jobs.length > 0 && (
+        <Field label="Accepted job">
+          <select className={inputClass} value={currentId} onChange={(event) => setSelectedId(event.target.value)}>
+            {jobs.map((job) => (
+              <option key={job.id} value={job.id}>{job.title}</option>
+            ))}
+          </select>
+        </Field>
+      )}
       <div className="mt-6 grid gap-4 sm:grid-cols-2">
         <Field label="Before photo">
-          <input className={inputClass} type="file" accept="image/*" />
+          <input className={inputClass} type="file" accept="image/*" onChange={(event) => setFiles({ ...files, before: event.target.files?.[0]?.name || "" })} />
         </Field>
         <Field label="After photo">
-          <input className={inputClass} type="file" accept="image/*" />
+          <input className={inputClass} type="file" accept="image/*" onChange={(event) => setFiles({ ...files, after: event.target.files?.[0]?.name || "" })} />
         </Field>
       </div>
-      <button className="mt-6 rounded-lg bg-success px-5 py-3 font-black text-navy">Submit Proof</button>
-      <Tracker current={accepted ? 3 : 1} />
+      {state.error && <p className="mt-4 text-sm text-danger">{state.error}</p>}
+      {state.saved && <p className="mt-4 text-sm text-success">{state.saved}</p>}
+      <button className="mt-6 rounded-lg bg-success px-5 py-3 font-black text-navy disabled:opacity-60" disabled={!accepted || state.loading} onClick={saveProof}>
+        {state.loading ? "Submitting..." : "Submit Proof"}
+      </button>
+      <Tracker current={accepted ? trackerStep(accepted.status) : 1} />
     </Card>
   );
+}
+
+function trackerStep(status) {
+  return { Open: 1, Assigned: 2, Completed: 3, Verified: 5 }[status] ?? 1;
 }
 
 function Tracker({ current }) {

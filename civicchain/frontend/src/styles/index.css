@@ -14,7 +14,8 @@ body {
   margin: 0;
   min-width: 320px;
   background:
-    radial-gradient(circle at top left, rgba(0, 212, 255, 0.13), transparent 30rem),
+    radial-gradient(circle at top left, rgba(0, 212, 255, 0.1), transparent 28rem),
+    radial-gradient(circle at bottom right, rgba(0, 255, 136, 0.06), transparent 24rem),
     linear-gradient(180deg, #0a0f1e 0%, #0d1528 100%);
   color: #f8fafc;
 }
@@ -24,6 +25,14 @@ input,
 select,
 textarea {
   font: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+button:disabled {
+  cursor: not-allowed;
 }
 
 .wallet-adapter-button {
