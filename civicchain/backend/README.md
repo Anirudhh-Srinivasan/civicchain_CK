@@ -45,9 +45,13 @@ The local SQLite database is created automatically at `backend/complaints.db`.
 POST /webhook
 GET  /complaints
 GET  /complaints/{id}
+POST /verify
+POST /complaints/{id}/verify-proof
 ```
 
 `POST /webhook` accepts Helius webhook payloads. It scans incoming transactions for CivicChain `submit_complaint` instructions, decodes the Anchor instruction arguments, and stores each complaint locally.
+
+`POST /complaints/{id}/verify-proof` accepts multipart `before_image` and `after_image` uploads. Text-only proof is stored for review but cannot approve work or release payment.
 
 ## Configure Helius
 
@@ -88,6 +92,8 @@ signature = release_payment(
     bid_pubkey="...",
     escrow_pubkey="...",
     contractor_pubkey="...",
+    ai_confidence=92,
+    proof_hash="sha256-proof-hash",
 )
 print(signature)
 ```
@@ -95,7 +101,7 @@ print(signature)
 Or from the command line:
 
 ```bash
-python backend/escrow.py <complaint_pubkey> <bid_pubkey> <escrow_pubkey> <contractor_pubkey>
+python backend/escrow.py <complaint_pubkey> <bid_pubkey> <escrow_pubkey> <contractor_pubkey> --ai-confidence 92 --proof-hash <sha256-proof-hash>
 ```
 
-The transaction is sent to Solana devnet using the wallet at `~/.config/solana/id.json`.
+The helper first calls `verify_work` with the AI confidence and proof hash, then calls `release_payment`. The transaction is sent to Solana devnet using the wallet at `~/.config/solana/id.json`.

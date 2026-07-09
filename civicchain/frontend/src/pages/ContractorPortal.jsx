@@ -132,7 +132,7 @@ function ActiveBids() {
             </div>
             <p className="text-2xl font-black text-success">{bid.bid_amount.toFixed(2)} SOL</p>
           </div>
-          <Tracker current={trackerStep(bid.status)} />
+          <Tracker current={trackerStep(bid.status, bid.payment_released)} />
         </Card>
       ))}
     </div>
@@ -143,7 +143,7 @@ function ProofUpload() {
   const { data, loading, error, refresh } = useComplaints();
   const jobs = useMemo(() => data.filter((item) => ["Assigned", "Completed"].includes(item.status)), [data]);
   const [selectedId, setSelectedId] = useState("");
-  const [files, setFiles] = useState({ before: "", after: "" });
+  const [files, setFiles] = useState({ before: null, after: null });
   const [proofText, setProofText] = useState("");
   const [state, setState] = useState({ loading: false, error: "", saved: "", verdict: null });
   const accepted = jobs.find((job) => String(job.id) === String(selectedId)) || jobs[0];
@@ -154,19 +154,18 @@ function ProofUpload() {
     try {
       const result = await submitProof(currentId, {
         complaint_text: accepted?.description,
-        before_image_name: files.before,
-        after_image_name: files.after,
+        before_image: files.before,
+        after_image: files.after,
         proof_text: proofText,
-        proof_hash: `${currentId}:${files.before}:${files.after}:${proofText}`.trim(),
         complaint_pubkey: accepted?.complaint_pubkey,
         contractor_pubkey: accepted?.contractor_pubkey,
       });
-      setFiles({ before: "", after: "" });
+      setFiles({ before: null, after: null });
       setProofText("");
       setState({
         loading: false,
         error: "",
-        saved: `${result.verification.approved ? "AI approved" : "AI rejected"} proof for ${result.complaint.title}.`,
+        saved: `${result.verification.approved ? "AI approved" : "AI held for review"} proof for ${result.complaint?.title || accepted?.title}.`,
         verdict: result.verification,
       });
       await refresh();
@@ -191,10 +190,10 @@ function ProofUpload() {
       )}
       <div className="mt-6 grid gap-4 sm:grid-cols-2">
         <Field label="Before photo">
-          <input className={inputClass} type="file" accept="image/*" onChange={(event) => setFiles({ ...files, before: event.target.files?.[0]?.name || "" })} />
+          <input className={inputClass} type="file" accept="image/png,image/jpeg" onChange={(event) => setFiles({ ...files, before: event.target.files?.[0] || null })} />
         </Field>
         <Field label="After photo">
-          <input className={inputClass} type="file" accept="image/*" onChange={(event) => setFiles({ ...files, after: event.target.files?.[0]?.name || "" })} />
+          <input className={inputClass} type="file" accept="image/png,image/jpeg" onChange={(event) => setFiles({ ...files, after: event.target.files?.[0] || null })} />
         </Field>
       </div>
       <Field label="Proof note">
@@ -212,19 +211,21 @@ function ProofUpload() {
         <div className="mt-4 rounded-lg border border-white/10 bg-white/5 p-4 text-sm text-slate-300">
           <p className="font-black text-white">Verdict: {state.verdict.verdict}</p>
           <p>Confidence: {Math.round((state.verdict.confidence || 0) * 100)}%</p>
+          {state.verdict.ai_source && <p>Source: {state.verdict.ai_source}</p>}
           {state.verdict.ai_result?.reasoning && <p className="mt-2">{state.verdict.ai_result.reasoning}</p>}
         </div>
       )}
-      <button className="mt-6 rounded-lg bg-success px-5 py-3 font-black text-navy disabled:opacity-60" disabled={!accepted || state.loading || (!proofText.trim() && (!files.before || !files.after))} onClick={saveProof}>
+      <button className="mt-6 rounded-lg bg-success px-5 py-3 font-black text-navy disabled:opacity-60" disabled={!accepted || state.loading || !files.before || !files.after} onClick={saveProof}>
         {state.loading ? "Verifying..." : "Submit Proof"}
       </button>
-      <Tracker current={accepted ? trackerStep(accepted.status) : 1} />
+      <Tracker current={accepted ? trackerStep(accepted.status, accepted.payment_released) : 1} />
     </Card>
   );
 }
 
-function trackerStep(status) {
-  return { Open: 1, Assigned: 2, Completed: 3, Verified: 5 }[status] ?? 1;
+function trackerStep(status, paymentReleased = false) {
+  if (paymentReleased) return 5;
+  return { Open: 1, Assigned: 2, Completed: 3, Verified: 4 }[status] ?? 1;
 }
 
 function Tracker({ current }) {

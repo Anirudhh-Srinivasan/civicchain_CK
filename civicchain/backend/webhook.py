@@ -12,8 +12,9 @@ import uuid
 from pathlib import Path
 from typing import Any, Iterable
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 try:
@@ -24,6 +25,11 @@ except ImportError:
 if load_dotenv is not None:
     load_dotenv(Path(__file__).with_name(".env"))
 
+try:
+    from PIL import Image
+except ImportError:
+    Image = None
+
 PROGRAM_ID = os.getenv("CIVICCHAIN_PROGRAM_ID", "12D76ecL7prNejn2PgyAebvrF5FrKpnY7ABNW5Zm2Qrm")
 DB_PATH = Path(__file__).with_name("complaints.db")
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -31,14 +37,21 @@ AI_BACKEND_PATHS = (
     PROJECT_ROOT / "ai-backend",
     PROJECT_ROOT.parent / "ai-backend",
 )
+UPLOAD_ROOT = Path(os.getenv("CIVICCHAIN_UPLOAD_ROOT", str(DB_PATH.parent / "uploads"))).resolve()
 PAYMENT_RELEASE_CONFIDENCE_THRESHOLD = float(
-    os.getenv("PAYMENT_RELEASE_CONFIDENCE_THRESHOLD", "0.75")
+    os.getenv("PAYMENT_RELEASE_CONFIDENCE_THRESHOLD", "0.85")
 )
+MAX_PROOF_IMAGE_BYTES = int(os.getenv("MAX_PROOF_IMAGE_BYTES", str(8 * 1024 * 1024)))
+MIN_PROOF_IMAGE_WIDTH = int(os.getenv("MIN_PROOF_IMAGE_WIDTH", "160"))
+MIN_PROOF_IMAGE_HEIGHT = int(os.getenv("MIN_PROOF_IMAGE_HEIGHT", "160"))
+ALLOWED_PROOF_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png"}
 SUBMIT_COMPLAINT_DISCRIMINATOR = hashlib.sha256(
     b"global:submit_complaint"
 ).digest()[:8]
 
 app = FastAPI(title="CivicChain Backend")
+UPLOAD_ROOT.mkdir(parents=True, exist_ok=True)
+app.mount("/uploads", StaticFiles(directory=str(UPLOAD_ROOT)), name="uploads")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -146,6 +159,12 @@ def init_db() -> None:
                 contractor_pubkey TEXT,
                 ai_confidence REAL,
                 ai_reasoning TEXT,
+                ai_source TEXT,
+                verification_status TEXT,
+                verification_checked_at TEXT,
+                proof_hash TEXT,
+                before_image_path TEXT,
+                after_image_path TEXT,
                 payment_released INTEGER DEFAULT 0,
                 signature TEXT,
                 slot INTEGER,
@@ -168,6 +187,12 @@ def init_db() -> None:
             "contractor_pubkey": "ALTER TABLE complaints ADD COLUMN contractor_pubkey TEXT",
             "ai_confidence": "ALTER TABLE complaints ADD COLUMN ai_confidence REAL",
             "ai_reasoning": "ALTER TABLE complaints ADD COLUMN ai_reasoning TEXT",
+            "ai_source": "ALTER TABLE complaints ADD COLUMN ai_source TEXT",
+            "verification_status": "ALTER TABLE complaints ADD COLUMN verification_status TEXT",
+            "verification_checked_at": "ALTER TABLE complaints ADD COLUMN verification_checked_at TEXT",
+            "proof_hash": "ALTER TABLE complaints ADD COLUMN proof_hash TEXT",
+            "before_image_path": "ALTER TABLE complaints ADD COLUMN before_image_path TEXT",
+            "after_image_path": "ALTER TABLE complaints ADD COLUMN after_image_path TEXT",
             "payment_released": "ALTER TABLE complaints ADD COLUMN payment_released INTEGER DEFAULT 0",
         }
         for column, statement in migrations.items():
@@ -201,6 +226,12 @@ def row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
         "contractor_pubkey": row["contractor_pubkey"],
         "ai_confidence": row["ai_confidence"],
         "ai_reasoning": row["ai_reasoning"],
+        "ai_source": row["ai_source"],
+        "verification_status": row["verification_status"],
+        "verification_checked_at": row["verification_checked_at"],
+        "proof_hash": row["proof_hash"],
+        "before_image_path": row["before_image_path"],
+        "after_image_path": row["after_image_path"],
         "payment_released": bool(row["payment_released"]),
         "signature": row["signature"],
         "slot": row["slot"],
@@ -224,6 +255,117 @@ def valid_solana_pubkey(value: str | None) -> bool:
     return len(decoded) == 32
 
 
+def optional_text(value: str | None) -> str | None:
+    if value is None:
+        return None
+    value = value.strip()
+    return value or None
+
+
+def is_relative_to(child: Path, parent: Path) -> bool:
+    try:
+        child.relative_to(parent)
+        return True
+    except ValueError:
+        return False
+
+
+def normalize_allowed_image_path(value: str | None) -> str | None:
+    value = optional_text(value)
+    if value is None:
+        return None
+
+    raw_path = Path(value).expanduser()
+    candidates = [raw_path] if raw_path.is_absolute() else [
+        (PROJECT_ROOT / raw_path),
+        (PROJECT_ROOT.parent / raw_path),
+        (UPLOAD_ROOT / raw_path),
+    ]
+    allowed_roots = [UPLOAD_ROOT, PROJECT_ROOT, *AI_BACKEND_PATHS]
+
+    for candidate in candidates:
+        resolved = candidate.resolve()
+        if not resolved.exists():
+            continue
+        if any(is_relative_to(resolved, root.resolve()) for root in allowed_roots if root.exists()):
+            return str(resolved)
+
+    raise HTTPException(
+        status_code=400,
+        detail="Image paths must point to existing proof images inside the project upload folders.",
+    )
+
+
+def validate_proof_image(file_path: Path) -> None:
+    if Image is None:
+        raise HTTPException(
+            status_code=500,
+            detail="Pillow is required to validate proof images. Install backend requirements.",
+        )
+
+    try:
+        with Image.open(file_path) as image:
+            width, height = image.size
+            image_format = image.format
+            image.verify()
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail="Proof upload is not a valid image") from exc
+
+    if image_format not in {"JPEG", "PNG"}:
+        raise HTTPException(status_code=400, detail="Only JPG, JPEG, and PNG proof images are allowed")
+    if width < MIN_PROOF_IMAGE_WIDTH or height < MIN_PROOF_IMAGE_HEIGHT:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Proof image is too small. Minimum size is {MIN_PROOF_IMAGE_WIDTH}x{MIN_PROOF_IMAGE_HEIGHT} pixels.",
+        )
+
+
+def save_uploaded_image(folder: str, label: str, upload: UploadFile) -> str:
+    extension = Path(upload.filename or "").suffix.lower()
+    if extension not in ALLOWED_PROOF_IMAGE_EXTENSIONS:
+        raise HTTPException(status_code=400, detail="Only JPG, JPEG, and PNG proof images are allowed")
+
+    target_dir = UPLOAD_ROOT / folder
+    target_dir.mkdir(parents=True, exist_ok=True)
+    target_path = target_dir / f"{label}-{uuid.uuid4().hex}{extension}"
+
+    total = 0
+    try:
+        with target_path.open("wb") as target_file:
+            while True:
+                chunk = upload.file.read(1024 * 1024)
+                if not chunk:
+                    break
+                total += len(chunk)
+                if total > MAX_PROOF_IMAGE_BYTES:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Proof image is too large. Maximum size is {MAX_PROOF_IMAGE_BYTES} bytes.",
+                    )
+                target_file.write(chunk)
+        validate_proof_image(target_path)
+    except HTTPException:
+        if target_path.exists():
+            target_path.unlink()
+        raise
+    except Exception as exc:
+        if target_path.exists():
+            target_path.unlink()
+        raise HTTPException(status_code=400, detail="Proof image could not be saved") from exc
+
+    return str(target_path)
+
+
+def save_proof_image(complaint_id: int, label: str, upload: UploadFile) -> str:
+    return save_uploaded_image(f"proofs/{complaint_id}", label, upload)
+
+
+def public_upload_url(file_path: str) -> str:
+    path = Path(file_path).resolve()
+    relative = path.relative_to(UPLOAD_ROOT).as_posix()
+    return f"/uploads/{relative}"
+
+
 def confidence_value(ai_result: dict[str, Any]) -> float:
     confidence = ai_result.get("confidence")
     if confidence is None:
@@ -241,10 +383,20 @@ def confidence_value(ai_result: dict[str, Any]) -> float:
     return confidence / 100 if confidence > 1 else confidence
 
 
+def is_trusted_ai_approval(ai_result: dict[str, Any]) -> bool:
+    return bool(
+        ai_result.get("approved")
+        and ai_result.get("source") == "groq"
+        and ai_result.get("trusted_ai")
+        and not ai_result.get("requires_human_review")
+        and confidence_value(ai_result) >= PAYMENT_RELEASE_CONFIDENCE_THRESHOLD
+    )
+
+
 def should_attempt_release(request: VerifyRequest, ai_result: dict[str, Any]) -> bool:
-    if not ai_result.get("approved"):
+    if not is_trusted_ai_approval(ai_result):
         return False
-    if confidence_value(ai_result) <= PAYMENT_RELEASE_CONFIDENCE_THRESHOLD:
+    if not request.proof_hash or len(request.proof_hash.strip()) < 16:
         return False
     if os.getenv("CIVICCHAIN_ENABLE_ESCROW_RELEASE", "").lower() not in {"1", "true", "yes"}:
         return False
@@ -517,6 +669,12 @@ def verify_complaint(request: VerifyRequest) -> dict[str, Any]:
     with get_db() as conn:
         row = find_complaint_for_verification(conn, request)
 
+    if row is not None and row["status"] not in ("Assigned", "Completed", "Verified"):
+        raise HTTPException(
+            status_code=400,
+            detail="Proof can only be verified after a bid has been assigned",
+        )
+
     complaint_text = request.complaint_text or (row["description"] if row else None)
     complaint_text = require_text(complaint_text, "complaint_text")
     proof_text = request.proof_text or ""
@@ -524,7 +682,7 @@ def verify_complaint(request: VerifyRequest) -> dict[str, Any]:
         proof_text = (
             f"Before image: {request.before_image_name or 'not provided'}. "
             f"After image: {request.after_image_name or 'not provided'}. "
-            "Contractor marked the repair completed."
+            "Only filenames were submitted, so visual verification still requires uploaded image content."
         )
 
     if not proof_text and not (request.before_image_path and request.after_image_path):
@@ -533,17 +691,21 @@ def verify_complaint(request: VerifyRequest) -> dict[str, Any]:
             detail="Submit proof_text or both before_image_path and after_image_path",
         )
 
+    before_image_path = normalize_allowed_image_path(request.before_image_path)
+    after_image_path = normalize_allowed_image_path(request.after_image_path)
+
     ai_result = verify_submitted_proof(
         complaint_text=complaint_text,
-        before_image_path=request.before_image_path,
-        after_image_path=request.after_image_path,
+        before_image_path=before_image_path,
+        after_image_path=after_image_path,
         proof_text=proof_text,
         proof_hash=request.proof_hash,
     )
 
     release_eligible = bool(
-        ai_result.get("approved")
-        and confidence_value(ai_result) > PAYMENT_RELEASE_CONFIDENCE_THRESHOLD
+        is_trusted_ai_approval(ai_result)
+        and request.proof_hash
+        and len(request.proof_hash.strip()) >= 16
     )
     should_release = should_attempt_release(request, ai_result)
     payment_signature = None
@@ -557,6 +719,8 @@ def verify_complaint(request: VerifyRequest) -> dict[str, Any]:
                 bid_pubkey=request.bid_pubkey or "",
                 escrow_pubkey=request.escrow_pubkey or "",
                 contractor_pubkey=request.contractor_pubkey or "",
+                ai_confidence=int(ai_result.get("confidence_score") or confidence_value(ai_result) * 100),
+                proof_hash=request.proof_hash or "",
             )
         except Exception as exc:
             payment_error = str(exc)
@@ -565,6 +729,7 @@ def verify_complaint(request: VerifyRequest) -> dict[str, Any]:
     updated_complaint = None
     if row is not None:
         next_status = "Verified" if ai_result.get("approved") else "Completed"
+        payment_released = bool(payment_signature or row["payment_released"])
         with get_db() as conn:
             conn.execute(
                 """
@@ -572,6 +737,12 @@ def verify_complaint(request: VerifyRequest) -> dict[str, Any]:
                 SET status = ?,
                     ai_confidence = ?,
                     ai_reasoning = ?,
+                    ai_source = ?,
+                    verification_status = ?,
+                    verification_checked_at = CURRENT_TIMESTAMP,
+                    proof_hash = ?,
+                    before_image_path = ?,
+                    after_image_path = ?,
                     payment_released = ?
                 WHERE id = ?
                 """,
@@ -579,7 +750,12 @@ def verify_complaint(request: VerifyRequest) -> dict[str, Any]:
                     next_status,
                     ai_result.get("confidence"),
                     ai_result.get("reasoning"),
-                    1 if payment_signature else 0,
+                    ai_result.get("source"),
+                    ai_result.get("verdict"),
+                    request.proof_hash,
+                    before_image_path,
+                    after_image_path,
+                    1 if payment_released else 0,
                     row["id"],
                 ),
             )
@@ -589,20 +765,103 @@ def verify_complaint(request: VerifyRequest) -> dict[str, Any]:
             ).fetchone()
             updated_complaint = row_to_dict(updated)
 
+    payment_released_response = bool(
+        payment_signature
+        or (updated_complaint and updated_complaint.get("payment_released"))
+    )
+
     return {
         "ai_result": ai_result,
         "verdict": ai_result.get("verdict"),
         "approved": bool(ai_result.get("approved")),
         "confidence": ai_result.get("confidence"),
+        "ai_source": ai_result.get("source"),
+        "requires_human_review": bool(ai_result.get("requires_human_review")),
         "release_eligible": release_eligible,
         "release_threshold": PAYMENT_RELEASE_CONFIDENCE_THRESHOLD,
-        "payment_released": bool(payment_signature),
+        "payment_released": payment_released_response,
         "payment_signature": payment_signature,
         "payment_error": payment_error,
         "complaint": updated_complaint,
     }
 
 
+@app.post("/complaints/{complaint_id}/verify-proof")
+def verify_uploaded_proof(
+    complaint_id: int,
+    before_image: UploadFile = File(...),
+    after_image: UploadFile = File(...),
+    complaint_text: str | None = Form(None),
+    proof_text: str | None = Form(None),
+    proof_hash: str | None = Form(None),
+    complaint_pubkey: str | None = Form(None),
+    bid_pubkey: str | None = Form(None),
+    escrow_pubkey: str | None = Form(None),
+    contractor_pubkey: str | None = Form(None),
+) -> dict[str, Any]:
+    init_db()
+    before_path = None
+    after_path = None
+    try:
+        before_path = save_proof_image(complaint_id, "before", before_image)
+        after_path = save_proof_image(complaint_id, "after", after_image)
+    except HTTPException:
+        for saved_path in (before_path, after_path):
+            if saved_path and Path(saved_path).exists():
+                Path(saved_path).unlink()
+        raise
+
+    request = VerifyRequest(
+        complaint_id=complaint_id,
+        complaint_text=optional_text(complaint_text),
+        before_image_path=before_path,
+        after_image_path=after_path,
+        proof_text=optional_text(proof_text),
+        proof_hash=optional_text(proof_hash),
+        complaint_pubkey=optional_text(complaint_pubkey),
+        bid_pubkey=optional_text(bid_pubkey),
+        escrow_pubkey=optional_text(escrow_pubkey),
+        contractor_pubkey=optional_text(contractor_pubkey),
+    )
+    try:
+        return verify_complaint(request)
+    except HTTPException:
+        for saved_path in (before_path, after_path):
+            if saved_path and Path(saved_path).exists():
+                Path(saved_path).unlink()
+        raise
+
+
+
+@app.post("/complaint-upload")
+def create_complaint_upload(
+    title: str = Form(...),
+    description: str = Form(...),
+    location: str = Form(...),
+    category: str | None = Form(None),
+    citizen_pubkey: str | None = Form(None),
+    latitude: float | None = Form(None),
+    longitude: float | None = Form(None),
+    photo: UploadFile = File(...),
+) -> dict[str, Any]:
+    saved_path = save_uploaded_image("complaints", "issue", photo)
+    try:
+        return create_complaint(
+            ManualComplaintRequest(
+                title=title,
+                description=description,
+                location=location,
+                category=category,
+                citizen_pubkey=citizen_pubkey,
+                photo_url=public_upload_url(saved_path),
+                latitude=latitude,
+                longitude=longitude,
+            )
+        )
+    except HTTPException:
+        if Path(saved_path).exists():
+            Path(saved_path).unlink()
+        raise
 @app.post("/complaint")
 def create_complaint(request: ManualComplaintRequest) -> dict[str, Any]:
     init_db()
@@ -763,10 +1022,16 @@ def submit_proof(complaint_id: int, request: ProofRequest) -> dict[str, Any]:
             UPDATE complaints
             SET status = 'Completed',
                 ai_confidence = NULL,
-                ai_reasoning = ?
+                ai_reasoning = ?,
+                ai_source = NULL,
+                verification_status = 'queued',
+                verification_checked_at = NULL,
+                proof_hash = ?,
+                before_image_path = NULL,
+                after_image_path = NULL
             WHERE id = ?
             """,
-            (reasoning, complaint_id),
+            (reasoning, request.proof_hash, complaint_id),
         )
         updated = conn.execute(
             "SELECT * FROM complaints WHERE id = ?",
@@ -774,3 +1039,4 @@ def submit_proof(complaint_id: int, request: ProofRequest) -> dict[str, Any]:
         ).fetchone()
 
     return row_to_dict(updated)
+

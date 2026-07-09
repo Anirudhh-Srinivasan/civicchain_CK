@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import sqlite3
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 
 
@@ -49,6 +50,12 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
             contractor_pubkey TEXT,
             ai_confidence REAL,
             ai_reasoning TEXT,
+            ai_source TEXT,
+            verification_status TEXT,
+            verification_checked_at TEXT,
+            proof_hash TEXT,
+            before_image_path TEXT,
+            after_image_path TEXT,
             payment_released INTEGER DEFAULT 0,
             signature TEXT,
             slot INTEGER,
@@ -69,6 +76,12 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
         "contractor_pubkey": "ALTER TABLE complaints ADD COLUMN contractor_pubkey TEXT",
         "ai_confidence": "ALTER TABLE complaints ADD COLUMN ai_confidence REAL",
         "ai_reasoning": "ALTER TABLE complaints ADD COLUMN ai_reasoning TEXT",
+        "ai_source": "ALTER TABLE complaints ADD COLUMN ai_source TEXT",
+        "verification_status": "ALTER TABLE complaints ADD COLUMN verification_status TEXT",
+        "verification_checked_at": "ALTER TABLE complaints ADD COLUMN verification_checked_at TEXT",
+        "proof_hash": "ALTER TABLE complaints ADD COLUMN proof_hash TEXT",
+        "before_image_path": "ALTER TABLE complaints ADD COLUMN before_image_path TEXT",
+        "after_image_path": "ALTER TABLE complaints ADD COLUMN after_image_path TEXT",
         "payment_released": "ALTER TABLE complaints ADD COLUMN payment_released INTEGER DEFAULT 0",
     }
     for column, statement in migrations.items():
@@ -89,10 +102,12 @@ def main() -> None:
                 INSERT INTO complaints (
                     complaint_pubkey, citizen_pubkey, title, description, location,
                     category, status, photo_url, estimated_fund, bid_amount,
-                    contractor_pubkey, ai_confidence, ai_reasoning, payment_released,
+                    contractor_pubkey, ai_confidence, ai_reasoning, ai_source,
+                    verification_status, verification_checked_at, proof_hash,
+                    before_image_path, after_image_path, payment_released,
                     signature, slot, raw_transaction
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     f"demo:{uuid.uuid4()}",
@@ -108,6 +123,12 @@ def main() -> None:
                     f"ContractorDemoWallet{index:02d}" if has_bid else None,
                     0.88 + (index % 8) / 100 if verified else None,
                     "Before and after imagery matches the reported issue and shows successful remediation." if verified else None,
+                    "groq" if verified else None,
+                    "approved" if verified else ("queued" if status == "Completed" else None),
+                    datetime.now(timezone.utc).isoformat() if verified else None,
+                    f"demo-proof-{index:02d}" if verified else None,
+                    None,
+                    None,
                     1 if verified else 0,
                     f"demo-signature-{index:02d}",
                     100000 + index,
