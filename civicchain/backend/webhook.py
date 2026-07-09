@@ -31,6 +31,9 @@ AI_BACKEND_PATHS = (
     PROJECT_ROOT / "ai-backend",
     PROJECT_ROOT.parent / "ai-backend",
 )
+PAYMENT_RELEASE_CONFIDENCE_THRESHOLD = float(
+    os.getenv("PAYMENT_RELEASE_CONFIDENCE_THRESHOLD", "0.75")
+)
 SUBMIT_COMPLAINT_DISCRIMINATOR = hashlib.sha256(
     b"global:submit_complaint"
 ).digest()[:8]
@@ -221,8 +224,27 @@ def valid_solana_pubkey(value: str | None) -> bool:
     return len(decoded) == 32
 
 
-def should_attempt_release(request: VerifyRequest, approved: bool) -> bool:
-    if not approved:
+def confidence_value(ai_result: dict[str, Any]) -> float:
+    confidence = ai_result.get("confidence")
+    if confidence is None:
+        confidence = ai_result.get("confidence_score", 0)
+        try:
+            return float(confidence) / 100
+        except (TypeError, ValueError):
+            return 0
+
+    try:
+        confidence = float(confidence)
+    except (TypeError, ValueError):
+        return 0
+
+    return confidence / 100 if confidence > 1 else confidence
+
+
+def should_attempt_release(request: VerifyRequest, ai_result: dict[str, Any]) -> bool:
+    if not ai_result.get("approved"):
+        return False
+    if confidence_value(ai_result) <= PAYMENT_RELEASE_CONFIDENCE_THRESHOLD:
         return False
     if os.getenv("CIVICCHAIN_ENABLE_ESCROW_RELEASE", "").lower() not in {"1", "true", "yes"}:
         return False
@@ -519,7 +541,11 @@ def verify_complaint(request: VerifyRequest) -> dict[str, Any]:
         proof_hash=request.proof_hash,
     )
 
-    should_release = should_attempt_release(request, bool(ai_result.get("approved")))
+    release_eligible = bool(
+        ai_result.get("approved")
+        and confidence_value(ai_result) > PAYMENT_RELEASE_CONFIDENCE_THRESHOLD
+    )
+    should_release = should_attempt_release(request, ai_result)
     payment_signature = None
     payment_error = None
 
@@ -568,6 +594,8 @@ def verify_complaint(request: VerifyRequest) -> dict[str, Any]:
         "verdict": ai_result.get("verdict"),
         "approved": bool(ai_result.get("approved")),
         "confidence": ai_result.get("confidence"),
+        "release_eligible": release_eligible,
+        "release_threshold": PAYMENT_RELEASE_CONFIDENCE_THRESHOLD,
         "payment_released": bool(payment_signature),
         "payment_signature": payment_signature,
         "payment_error": payment_error,
