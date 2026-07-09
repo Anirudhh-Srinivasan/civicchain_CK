@@ -8,7 +8,7 @@ import ComplaintMap from "../components/ComplaintMap";
 import PortalNav from "../components/PortalNav";
 import SessionBanner from "../components/SessionBanner";
 import { Card, EmptyState, ErrorState, Field, LoadingState, StatusBadge, inputClass } from "../components/ui";
-import { createComplaint, getComplaint, getComplaints, imageForCategory } from "../services/api";
+import { createComplaint, getComplaint, getComplaints } from "../services/api";
 import { getSession } from "../services/auth";
 import { geocodeAddress } from "../services/geo";
 
@@ -37,7 +37,7 @@ function CitizenHome() {
   const { publicKey } = useWallet();
   const session = getSession();
   const [form, setForm] = useState({ title: "", description: "", location: "", category: "pothole" });
-  const [photoName, setPhotoName] = useState("");
+  const [photoFile, setPhotoFile] = useState(null);
   const [state, setState] = useState({ loading: false, error: "", saved: null });
 
   const submit = async (event) => {
@@ -51,10 +51,10 @@ function CitizenHome() {
           ? { latitude: coordinates.latitude, longitude: coordinates.longitude }
           : {}),
         citizen_pubkey: publicKey?.toBase58() || session?.id || null,
-        photo_url: imageForCategory(form.category),
+        photo: photoFile,
       });
       setForm({ title: "", description: "", location: "", category: "pothole" });
-      setPhotoName("");
+      setPhotoFile(null);
       setState({ loading: false, error: "", saved });
     } catch (error) {
       setState({ loading: false, error: error.message, saved: null });
@@ -112,9 +112,9 @@ function CitizenHome() {
             <label className="flex cursor-pointer items-center justify-between rounded-lg border border-dashed border-white/20 bg-navy/70 px-4 py-4 text-sm text-slate-300">
               <span className="inline-flex items-center gap-2">
                 <Camera className="h-4 w-4 text-cyan" />
-                {photoName || "Choose issue photo"}
+                {photoFile?.name || "Choose issue photo"}
               </span>
-              <input className="hidden" type="file" accept="image/*" onChange={(e) => setPhotoName(e.target.files?.[0]?.name || "")} />
+              <input className="hidden" type="file" accept="image/*" onChange={(e) => setPhotoFile(e.target.files?.[0] || null)} />
             </label>
           </Field>
           {state.error && <p className="text-sm text-danger">{state.error}</p>}
@@ -181,12 +181,19 @@ export function DetailView({ complaint, back }) {
         </Card>
         <Card className="p-6">
           <h2 className="text-xl font-black">AI Verification</h2>
-          <p className="mt-3 text-3xl font-black text-cyan">{complaint.ai_confidence ? `${Math.round(complaint.ai_confidence * 100)}%` : "Pending"}</p>
+          <p className="mt-3 text-3xl font-black text-cyan">{verificationLabel(complaint)}</p>
           <p className="mt-2 text-sm text-slate-300">{complaint.ai_reasoning || "Proof images have not been verified yet."}</p>
         </Card>
       </div>
     </div>
   );
+}
+
+function verificationLabel(complaint) {
+  if (complaint.ai_confidence) return `${Math.round(complaint.ai_confidence * 100)}%`;
+  if (complaint.verification_status === "queued") return "Queued";
+  if (complaint.verification_status === "rejected") return "Review";
+  return "Pending";
 }
 
 export function useComplaints() {
@@ -217,3 +224,4 @@ export function useComplaint(id) {
   }, [id]);
   return state;
 }
+

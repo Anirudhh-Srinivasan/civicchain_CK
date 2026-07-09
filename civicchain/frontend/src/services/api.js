@@ -8,6 +8,7 @@ export const api = axios.create({
 const statusCycle = ["Open", "Assigned", "Completed", "Verified"];
 const categoryCycle = ["pothole", "flooding", "garbage", "streetlight", "water leak"];
 const localKey = "civicchain:complaints";
+const apiOrigin = api.defaults.baseURL.replace(/\/$/, "");
 
 const demoComplaints = [
   ["Open", "pothole", "Deep pothole near Anna Nagar roundabout", "A large pothole is slowing traffic and causing two-wheelers to swerve during peak hours.", "Anna Nagar, Chennai", 0.42],
@@ -86,7 +87,7 @@ export function normalizeComplaint(item, index = 0) {
       item.longitude === null || item.longitude === undefined || item.longitude === ""
         ? null
         : Number(item.longitude),
-    photo_url: item.photo_url || imageForCategory(category),
+    photo_url: resolvePhotoUrl(item.photo_url || imageForCategory(category)),
     ai_confidence:
       item.ai_confidence === null || item.ai_confidence === undefined
         ? status === "Verified"
@@ -98,6 +99,11 @@ export function normalizeComplaint(item, index = 0) {
       (status === "Verified"
         ? "Visual evidence indicates the reported civic issue has been resolved."
         : null),
+    ai_source: item.ai_source || (status === "Verified" ? "groq" : null),
+    verification_status:
+      item.verification_status || (status === "Verified" ? "approved" : status === "Completed" ? "queued" : null),
+    verification_checked_at: item.verification_checked_at || null,
+    proof_hash: item.proof_hash || null,
     bid_amount:
       item.bid_amount === null || item.bid_amount === undefined
         ? status === "Open"
@@ -133,13 +139,30 @@ export async function getComplaint(id) {
 
 export async function createComplaint(payload) {
   try {
-    const { data } = await api.post("/complaint", payload);
+    const photoFile = payload.photo || payload.photo_file;
+    let data;
+    if (photoFile) {
+      const form = new FormData();
+      appendFormValue(form, "title", payload.title);
+      appendFormValue(form, "description", payload.description);
+      appendFormValue(form, "location", payload.location);
+      appendFormValue(form, "category", payload.category);
+      appendFormValue(form, "citizen_pubkey", payload.citizen_pubkey);
+      appendFormValue(form, "latitude", payload.latitude);
+      appendFormValue(form, "longitude", payload.longitude);
+      form.append("photo", photoFile);
+      ({ data } = await api.post("/complaint-upload", form));
+    } else {
+      ({ data } = await api.post("/complaint", payload));
+    }
     return normalizeComplaint(data);
   } catch (error) {
     if (!isNetworkError(error)) throw new Error(apiMessage(error));
     const items = readLocalComplaints();
+    const photoFile = payload.photo || payload.photo_file;
     const saved = normalizeComplaint({
       ...payload,
+      photo_url: photoFile ? URL.createObjectURL(photoFile) : payload.photo_url,
       id: Math.max(0, ...items.map((item) => Number(item.id) || 0)) + 1,
       complaint_pubkey: `local:${crypto.randomUUID?.() || Date.now()}`,
       status: "Open",
@@ -174,34 +197,118 @@ export async function placeBid(id, payload) {
 
 export async function submitProof(id, payload) {
   try {
-    const { data } = await api.post("/verify", {
-      complaint_id: Number(id),
-      ...payload,
-    });
+    const beforeFile = payload.before_image || payload.beforeImage || payload.before;
+    const afterFile = payload.after_image || payload.afterImage || payload.after;
+    let data;
+
+    if (beforeFile && afterFile) {
+      const form = new FormData();
+      form.append("before_image", beforeFile);
+      form.append("after_image", afterFile);
+      appendFormValue(form, "complaint_text", payload.complaint_text);
+      appendFormValue(form, "proof_text", payload.proof_text);
+      appendFormValue(
+        form,
+        "proof_hash",
+        payload.proof_hash || (await createProofHash(id, payload, beforeFile, afterFile)),
+      );
+      appendFormValue(form, "complaint_pubkey", payload.complaint_pubkey);
+      appendFormValue(form, "bid_pubkey", payload.bid_pubkey);
+      appendFormValue(form, "escrow_pubkey", payload.escrow_pubkey);
+      appendFormValue(form, "contractor_pubkey", payload.contractor_pubkey);
+      ({ data } = await api.post(`/complaints/${id}/verify-proof`, form));
+    } else {
+      const {
+        before_image,
+        after_image,
+        beforeImage,
+        afterImage,
+        before,
+        after,
+        ...jsonPayload
+      } = payload;
+      ({ data } = await api.post("/verify", {
+        complaint_id: Number(id),
+        ...jsonPayload,
+        before_image_name: beforeFile?.name,
+        after_image_name: afterFile?.name,
+      }));
+    }
+
     return {
-      complaint: normalizeComplaint(data.complaint),
+      complaint: data.complaint ? normalizeComplaint(data.complaint) : null,
       verification: data,
     };
   } catch (error) {
     if (!isNetworkError(error)) throw new Error(apiMessage(error));
     const updated = updateLocalComplaint(id, (item) => ({
       ...item,
-      status: payload.proof_text?.toLowerCase().includes("complete") || payload.proof_text?.toLowerCase().includes("fixed") ? "Verified" : "Completed",
-      ai_confidence: 0.82,
-      ai_reasoning: "Offline demo verification used local proof text because the backend was unavailable.",
+      status: "Completed",
+      ai_confidence: null,
+      ai_reasoning: "Proof was saved locally, but AI verification needs the backend.",
+      verification_status: "queued",
     }));
     return {
       complaint: updated,
       verification: {
-        verdict: updated.status === "Verified" ? "approved" : "rejected",
-        approved: updated.status === "Verified",
-        confidence: updated.ai_confidence,
+        verdict: "rejected",
+        approved: false,
+        requires_human_review: true,
+        confidence: 0,
+        ai_result: {
+          reasoning: updated.ai_reasoning,
+        },
       },
     };
   }
 }
 
+function appendFormValue(form, key, value) {
+  if (value === null || value === undefined) return;
+  const normalized = String(value).trim();
+  if (normalized) form.append(key, normalized);
+}
+
+async function createProofHash(id, payload, beforeFile, afterFile) {
+  const fallback = `${id}:${beforeFile.name}:${beforeFile.size}:${afterFile.name}:${afterFile.size}:${payload.proof_text || ""}`;
+  if (typeof crypto === "undefined" || !crypto.subtle) return fallback;
+
+  const encoder = new TextEncoder();
+  const metadata = encoder.encode(
+    JSON.stringify({
+      id,
+      proof_text: payload.proof_text || "",
+      before: {
+        name: beforeFile.name,
+        size: beforeFile.size,
+        lastModified: beforeFile.lastModified,
+      },
+      after: {
+        name: afterFile.name,
+        size: afterFile.size,
+        lastModified: afterFile.lastModified,
+      },
+    }),
+  );
+  const beforeBytes = new Uint8Array(await beforeFile.arrayBuffer());
+  const afterBytes = new Uint8Array(await afterFile.arrayBuffer());
+  const combined = new Uint8Array(metadata.length + beforeBytes.length + afterBytes.length);
+  combined.set(metadata, 0);
+  combined.set(beforeBytes, metadata.length);
+  combined.set(afterBytes, metadata.length + beforeBytes.length);
+  const digest = await crypto.subtle.digest("SHA-256", combined);
+  return Array.from(new Uint8Array(digest))
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+function resolvePhotoUrl(url) {
+  if (!url) return url;
+  if (url.startsWith("http://") || url.startsWith("https://") || url.startsWith("blob:") || url.startsWith("data:")) return url;
+  return `${apiOrigin}${url.startsWith("/") ? url : `/${url}`}`;
+}
 export function imageForCategory(category) {
   const encoded = encodeURIComponent(`Chennai civic ${category}`);
   return `https://source.unsplash.com/900x600/?${encoded}`;
 }
+
