@@ -144,22 +144,34 @@ function ProofUpload() {
   const jobs = useMemo(() => data.filter((item) => ["Assigned", "Completed"].includes(item.status)), [data]);
   const [selectedId, setSelectedId] = useState("");
   const [files, setFiles] = useState({ before: "", after: "" });
-  const [state, setState] = useState({ loading: false, error: "", saved: "" });
+  const [proofText, setProofText] = useState("");
+  const [state, setState] = useState({ loading: false, error: "", saved: "", verdict: null });
   const accepted = jobs.find((job) => String(job.id) === String(selectedId)) || jobs[0];
   const currentId = selectedId || accepted?.id || "";
   const saveProof = async () => {
     if (!currentId) return;
-    setState({ loading: true, error: "", saved: "" });
+    setState({ loading: true, error: "", saved: "", verdict: null });
     try {
-      const updated = await submitProof(currentId, {
+      const result = await submitProof(currentId, {
+        complaint_text: accepted?.description,
         before_image_name: files.before,
         after_image_name: files.after,
+        proof_text: proofText,
+        proof_hash: `${currentId}:${files.before}:${files.after}:${proofText}`.trim(),
+        complaint_pubkey: accepted?.complaint_pubkey,
+        contractor_pubkey: accepted?.contractor_pubkey,
       });
       setFiles({ before: "", after: "" });
-      setState({ loading: false, error: "", saved: `Proof submitted for ${updated.title}.` });
+      setProofText("");
+      setState({
+        loading: false,
+        error: "",
+        saved: `${result.verification.approved ? "AI approved" : "AI rejected"} proof for ${result.complaint.title}.`,
+        verdict: result.verification,
+      });
       await refresh();
     } catch (error) {
-      setState({ loading: false, error: error.message, saved: "" });
+      setState({ loading: false, error: error.message, saved: "", verdict: null });
     }
   };
   if (loading) return <LoadingState />;
@@ -185,10 +197,26 @@ function ProofUpload() {
           <input className={inputClass} type="file" accept="image/*" onChange={(event) => setFiles({ ...files, after: event.target.files?.[0]?.name || "" })} />
         </Field>
       </div>
+      <Field label="Proof note">
+        <textarea
+          className={inputClass}
+          rows="4"
+          placeholder="Describe the completed repair or resolution."
+          value={proofText}
+          onChange={(event) => setProofText(event.target.value)}
+        />
+      </Field>
       {state.error && <p className="mt-4 text-sm text-danger">{state.error}</p>}
       {state.saved && <p className="mt-4 text-sm text-success">{state.saved}</p>}
-      <button className="mt-6 rounded-lg bg-success px-5 py-3 font-black text-navy disabled:opacity-60" disabled={!accepted || state.loading} onClick={saveProof}>
-        {state.loading ? "Submitting..." : "Submit Proof"}
+      {state.verdict && (
+        <div className="mt-4 rounded-lg border border-white/10 bg-white/5 p-4 text-sm text-slate-300">
+          <p className="font-black text-white">Verdict: {state.verdict.verdict}</p>
+          <p>Confidence: {Math.round((state.verdict.confidence || 0) * 100)}%</p>
+          {state.verdict.ai_result?.reasoning && <p className="mt-2">{state.verdict.ai_result.reasoning}</p>}
+        </div>
+      )}
+      <button className="mt-6 rounded-lg bg-success px-5 py-3 font-black text-navy disabled:opacity-60" disabled={!accepted || state.loading || (!proofText.trim() && (!files.before || !files.after))} onClick={saveProof}>
+        {state.loading ? "Verifying..." : "Submit Proof"}
       </button>
       <Tracker current={accepted ? trackerStep(accepted.status) : 1} />
     </Card>

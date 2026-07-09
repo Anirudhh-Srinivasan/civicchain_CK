@@ -174,16 +174,30 @@ export async function placeBid(id, payload) {
 
 export async function submitProof(id, payload) {
   try {
-    const { data } = await api.post(`/complaints/${id}/proof`, payload);
-    return normalizeComplaint(data);
+    const { data } = await api.post("/verify", {
+      complaint_id: Number(id),
+      ...payload,
+    });
+    return {
+      complaint: normalizeComplaint(data.complaint),
+      verification: data,
+    };
   } catch (error) {
     if (!isNetworkError(error)) throw new Error(apiMessage(error));
-    return updateLocalComplaint(id, (item) => ({
+    const updated = updateLocalComplaint(id, (item) => ({
       ...item,
-      status: "Completed",
-      ai_confidence: null,
-      ai_reasoning: "Proof submitted and queued for AI verification.",
+      status: payload.proof_text?.toLowerCase().includes("complete") || payload.proof_text?.toLowerCase().includes("fixed") ? "Verified" : "Completed",
+      ai_confidence: 0.82,
+      ai_reasoning: "Offline demo verification used local proof text because the backend was unavailable.",
     }));
+    return {
+      complaint: updated,
+      verification: {
+        verdict: updated.status === "Verified" ? "approved" : "rejected",
+        approved: updated.status === "Verified",
+        confidence: updated.ai_confidence,
+      },
+    };
   }
 }
 

@@ -46,21 +46,37 @@ def main() -> int:
         found = any(item.get("id") == complaint.get("id") for item in complaints)
         passed.append(report("GET /complaints contains created complaint", found))
 
+        status, bid = request_json(
+            "POST",
+            f"/complaints/{complaint['id']}/bid",
+            {
+                "amount": 0.42,
+                "contractor_pubkey": "IntegrationContractorWallet",
+            },
+        )
+        passed.append(report("POST /complaints/{id}/bid", status == 200 and bid.get("status") == "Assigned", str(bid)))
+
         try:
             status, verification = request_json(
                 "POST",
                 "/verify",
                 {
+                    "complaint_id": complaint["id"],
                     "complaint_text": complaint["description"],
-                    "before_image_path": "/tmp/civicchain-before.jpg",
-                    "after_image_path": "/tmp/civicchain-after.jpg",
+                    "before_image_name": "before.jpg",
+                    "after_image_name": "after.jpg",
+                    "proof_text": "The pothole repair is completed and the road surface is fixed.",
+                    "proof_hash": "integration-proof-hash-0001",
                     "complaint_pubkey": complaint["complaint_pubkey"],
-                    "bid_pubkey": "11111111111111111111111111111111",
-                    "escrow_pubkey": "11111111111111111111111111111111",
-                    "contractor_pubkey": "11111111111111111111111111111111",
+                    "contractor_pubkey": "IntegrationContractorWallet",
                 },
             )
-            passed.append(report("POST /verify", status == 200 and "ai_result" in verification, str(verification)))
+            verified = (
+                status == 200
+                and verification.get("approved") is True
+                and verification.get("complaint", {}).get("status") == "Verified"
+            )
+            passed.append(report("POST /verify approves proof", verified, str(verification)))
         except HTTPError as error:
             detail = error.read().decode("utf-8")
             passed.append(report("POST /verify", False, detail))
