@@ -60,3 +60,5 @@ secrets/
 
 # Local tools
 .surfpool/
+backend/uploads/
+uploads/

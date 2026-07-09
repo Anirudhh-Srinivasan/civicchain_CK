@@ -36,7 +36,7 @@ function Overview() {
   if (error) return <ErrorState message={error} />;
   const resolved = data.filter((item) => item.status === "Verified").length;
   const pending = data.filter((item) => item.status !== "Verified").length;
-  const released = data.filter((item) => item.payment_released || item.status === "Verified").reduce((sum, item) => sum + item.estimated_fund, 0);
+  const released = data.filter((item) => item.payment_released).reduce((sum, item) => sum + item.estimated_fund, 0);
   return (
     <div className="space-y-6">
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
@@ -117,7 +117,7 @@ function ComplaintsTable({ compact = false }) {
                 <td className="px-4 py-4 text-slate-300">{item.category}</td>
                 <td className="px-4 py-4 text-slate-300">{item.location}</td>
                 <td className="px-4 py-4"><StatusBadge status={item.status} /></td>
-                <td className="px-4 py-4 text-cyan">{item.ai_confidence ? `${Math.round(item.ai_confidence * 100)}%` : "Pending"}</td>
+                <td className="px-4 py-4 text-cyan">{aiLabel(item)}</td>
                 <td className="px-4 py-4">
                   <Link className="inline-flex items-center gap-2 font-bold text-cyan" to={`/government/complaints/${item.id}`}>
                     <FileSearch className="h-4 w-4" /> View
@@ -143,8 +143,8 @@ function Funds() {
   const { data, loading, error } = useComplaints();
   if (loading) return <LoadingState />;
   if (error) return <ErrorState message={error} />;
-  const locked = data.filter((item) => item.status !== "Verified").reduce((sum, item) => sum + item.estimated_fund, 0);
-  const released = data.filter((item) => item.status === "Verified").reduce((sum, item) => sum + item.estimated_fund, 0);
+  const locked = data.filter((item) => !item.payment_released).reduce((sum, item) => sum + item.estimated_fund, 0);
+  const released = data.filter((item) => item.payment_released).reduce((sum, item) => sum + item.estimated_fund, 0);
   return (
     <div className="grid gap-5 md:grid-cols-2">
       <Stat label="Total SOL locked in escrow" value={`${locked.toFixed(2)} SOL`} tone="cyan" />
@@ -165,7 +165,7 @@ function GovDetail() {
         <h2 className="text-xl font-black">Full Timeline</h2>
         <div className="mt-4 grid gap-3 md:grid-cols-5">
           {["Submitted", "Bid", "Accepted", "Verified", "Paid"].map((step, index) => (
-            <div key={step} className={`rounded-lg border p-3 text-sm ${index <= timelineIndex(complaint.status) ? "border-success/40 bg-success/10 text-success" : "border-white/10 text-slate-500"}`}>
+            <div key={step} className={`rounded-lg border p-3 text-sm ${index <= timelineIndex(complaint) ? "border-success/40 bg-success/10 text-success" : "border-white/10 text-slate-500"}`}>
               {step}
             </div>
           ))}
@@ -175,6 +175,14 @@ function GovDetail() {
   );
 }
 
-function timelineIndex(status) {
-  return { Open: 0, Assigned: 2, Completed: 3, Verified: 4 }[status] ?? 0;
+function aiLabel(item) {
+  if (item.ai_confidence) return `${Math.round(item.ai_confidence * 100)}%`;
+  if (item.verification_status === "queued") return "Queued";
+  if (item.verification_status === "rejected") return "Review";
+  return "Pending";
+}
+
+function timelineIndex(complaint) {
+  if (complaint.payment_released) return 4;
+  return { Open: 0, Assigned: 2, Completed: 2, Verified: 3 }[complaint.status] ?? 0;
 }

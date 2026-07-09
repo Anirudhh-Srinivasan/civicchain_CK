@@ -10,8 +10,8 @@ Program ID:
 
 ## Tech Stack
 
-- Solana + Anchor smart contract: `submit_complaint`, `place_bid`, `accept_bid`, `release_payment`
-- FastAPI backend with SQLite indexing and `/webhook`, `/complaint`, `/complaints`, `/complaints/{id}`, `/verify`
+- Solana + Anchor smart contract: `submit_complaint`, `place_bid`, `accept_bid`, `verify_work`, `release_payment`
+- FastAPI backend with SQLite indexing and `/webhook`, `/complaint`, `/complaints`, `/complaints/{id}`, `/verify`, `/complaints/{id}/verify-proof`
 - Groq + Llama 4 Vision AI backend through `run_ai_workflow()`
 - React + Vite frontend with Tailwind CSS, React Router, Leaflet maps, Axios, and Phantom wallet adapter
 
@@ -45,13 +45,13 @@ VITE_API_URL=http://localhost:8000
 
 ### AI Backend
 
-Keep the `ai-backend/` folder next to this project or inside the project root. The FastAPI `/verify` endpoint imports `ai_verifier.py` and calls:
+Keep the `ai-backend/` folder next to this project or inside the project root. The FastAPI `/verify` endpoint imports `ai_verifier.py`; uploaded contractor proof goes through:
 
 ```python
-run_ai_workflow(complaint_text, before_image_path, after_image_path)
+verify_submitted_proof(complaint_text, before_image_path, after_image_path, proof_text, proof_hash)
 ```
 
-If the AI backend is unavailable, `/verify` returns an error while the rest of the app remains usable.
+AI approval is fail-closed: text-only proof is held for review, before/after images must pass validation, and trusted Groq vision approval defaults to an 85% confidence threshold before release can be considered.
 
 ### Demo Data
 

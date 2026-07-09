@@ -40,15 +40,29 @@ async def release_payment_async(
     bid_pubkey: str,
     escrow_pubkey: str,
     contractor_pubkey: str,
+    ai_confidence: int,
+    proof_hash: str,
 ) -> str:
     async with AsyncClient(RPC_URL) as client:
         program = await _load_program(client)
         citizen = program.provider.wallet.public_key
+        complaint = Pubkey.from_string(complaint_pubkey)
+
+        await program.rpc["verify_work"](
+            ai_confidence,
+            proof_hash,
+            ctx=Context(
+                accounts={
+                    "complaint": complaint,
+                    "citizen": citizen,
+                }
+            ),
+        )
 
         signature = await program.rpc["release_payment"](
             ctx=Context(
                 accounts={
-                    "complaint": Pubkey.from_string(complaint_pubkey),
+                    "complaint": complaint,
                     "bid": Pubkey.from_string(bid_pubkey),
                     "escrow": Pubkey.from_string(escrow_pubkey),
                     "contractor": Pubkey.from_string(contractor_pubkey),
@@ -65,6 +79,8 @@ def release_payment(
     bid_pubkey: str,
     escrow_pubkey: str,
     contractor_pubkey: str,
+    ai_confidence: int,
+    proof_hash: str,
 ) -> str:
     return asyncio.run(
         release_payment_async(
@@ -72,6 +88,8 @@ def release_payment(
             bid_pubkey,
             escrow_pubkey,
             contractor_pubkey,
+            ai_confidence,
+            proof_hash,
         )
     )
 
@@ -84,6 +102,8 @@ if __name__ == "__main__":
     parser.add_argument("bid_pubkey")
     parser.add_argument("escrow_pubkey")
     parser.add_argument("contractor_pubkey")
+    parser.add_argument("--ai-confidence", type=int, required=True)
+    parser.add_argument("--proof-hash", required=True)
     args = parser.parse_args()
 
     tx_signature = release_payment(
@@ -91,5 +111,7 @@ if __name__ == "__main__":
         args.bid_pubkey,
         args.escrow_pubkey,
         args.contractor_pubkey,
+        args.ai_confidence,
+        args.proof_hash,
     )
     print(tx_signature)

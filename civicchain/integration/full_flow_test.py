@@ -71,12 +71,13 @@ def main() -> int:
                     "contractor_pubkey": "IntegrationContractorWallet",
                 },
             )
-            verified = (
+            held_for_review = (
                 status == 200
-                and verification.get("approved") is True
-                and verification.get("complaint", {}).get("status") == "Verified"
+                and verification.get("approved") is False
+                and verification.get("requires_human_review") is True
+                and verification.get("complaint", {}).get("status") == "Completed"
             )
-            passed.append(report("POST /verify approves proof", verified, str(verification)))
+            passed.append(report("POST /verify holds text-only proof for review", held_for_review, str(verification)))
         except HTTPError as error:
             detail = error.read().decode("utf-8")
             passed.append(report("POST /verify", False, detail))
