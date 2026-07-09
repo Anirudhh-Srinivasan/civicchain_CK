@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 from pathlib import Path
 
 from anchorpy import Context, Program, Provider, Wallet
@@ -10,10 +11,17 @@ from solders.keypair import Keypair
 from solders.pubkey import Pubkey
 
 
-PROGRAM_ID = Pubkey.from_string("12D76ecL7prNejn2PgyAebvrF5FrKpnY7ABNW5Zm2Qrm")
-RPC_URL = "https://api.devnet.solana.com"
-WALLET_PATH = Path.home() / ".config" / "solana" / "id.json"
-IDL_PATH = Path(__file__).resolve().parents[1] / "target" / "idl" / "civicchain.json"
+PROGRAM_ID = Pubkey.from_string(
+    os.getenv("CIVICCHAIN_PROGRAM_ID", "12D76ecL7prNejn2PgyAebvrF5FrKpnY7ABNW5Zm2Qrm")
+)
+RPC_URL = os.getenv("SOLANA_RPC_URL", "https://api.devnet.solana.com")
+WALLET_PATH = Path(os.getenv("SOLANA_WALLET_PATH", str(Path.home() / ".config" / "solana" / "id.json")))
+IDL_PATH = Path(
+    os.getenv(
+        "CIVICCHAIN_IDL_PATH",
+        str(Path(__file__).resolve().parents[1] / "target" / "idl" / "civicchain.json"),
+    )
+)
 
 
 def load_wallet(path: Path = WALLET_PATH) -> Wallet:
