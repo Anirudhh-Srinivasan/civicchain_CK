@@ -16,8 +16,9 @@ import { getSession, pathForRole } from "./services/auth.js";
 
 function Providers({ children }) {
   const wallets = useMemo(() => [new PhantomWalletAdapter()], []);
+  const endpoint = import.meta.env.VITE_SOLANA_RPC_URL || "https://api.devnet.solana.com";
   return (
-    <ConnectionProvider endpoint="https://api.devnet.solana.com">
+    <ConnectionProvider endpoint={endpoint}>
       <WalletProvider wallets={wallets} autoConnect>
         <WalletModalProvider>{children}</WalletModalProvider>
       </WalletProvider>

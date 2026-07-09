@@ -4,6 +4,7 @@ import base64
 import base58
 import hashlib
 import json
+import os
 import sqlite3
 import struct
 import sys
@@ -15,8 +16,15 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
+try:
+    from dotenv import load_dotenv
+except ImportError:
+    load_dotenv = None
 
-PROGRAM_ID = "12D76ecL7prNejn2PgyAebvrF5FrKpnY7ABNW5Zm2Qrm"
+if load_dotenv is not None:
+    load_dotenv(Path(__file__).with_name(".env"))
+
+PROGRAM_ID = os.getenv("CIVICCHAIN_PROGRAM_ID", "12D76ecL7prNejn2PgyAebvrF5FrKpnY7ABNW5Zm2Qrm")
 DB_PATH = Path(__file__).with_name("complaints.db")
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 AI_BACKEND_PATHS = (
@@ -54,13 +62,18 @@ class ManualComplaintRequest(BaseModel):
 
 
 class VerifyRequest(BaseModel):
-    complaint_text: str
-    before_image_path: str
-    after_image_path: str
-    complaint_pubkey: str
-    bid_pubkey: str
-    escrow_pubkey: str
-    contractor_pubkey: str
+    complaint_id: int | None = None
+    complaint_text: str | None = None
+    before_image_path: str | None = None
+    after_image_path: str | None = None
+    before_image_name: str | None = None
+    after_image_name: str | None = None
+    proof_text: str | None = None
+    proof_hash: str | None = None
+    complaint_pubkey: str | None = None
+    bid_pubkey: str | None = None
+    escrow_pubkey: str | None = None
+    contractor_pubkey: str | None = None
 
 
 class BidRequest(BaseModel):
@@ -71,6 +84,8 @@ class BidRequest(BaseModel):
 class ProofRequest(BaseModel):
     before_image_name: str | None = None
     after_image_name: str | None = None
+    proof_text: str | None = None
+    proof_hash: str | None = None
 
 
 def get_db() -> sqlite3.Connection:
@@ -79,20 +94,20 @@ def get_db() -> sqlite3.Connection:
     return conn
 
 
-def load_ai_workflow():
+def load_ai_verifier():
     for path in AI_BACKEND_PATHS:
         if path.exists() and str(path) not in sys.path:
             sys.path.insert(0, str(path))
 
     try:
-        from ai_verifier import run_ai_workflow
+        from ai_verifier import run_ai_workflow, verify_submitted_proof
     except ImportError as exc:
         raise HTTPException(
             status_code=500,
             detail="AI backend not found. Expected ai_verifier.py in ai-backend/.",
         ) from exc
 
-    return run_ai_workflow
+    return run_ai_workflow, verify_submitted_proof
 
 
 def load_release_payment():
@@ -188,6 +203,52 @@ def row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
         "slot": row["slot"],
         "created_at": row["created_at"],
     }
+
+
+def require_text(value: str | None, field: str) -> str:
+    if value is None or not value.strip():
+        raise HTTPException(status_code=400, detail=f"{field} is required")
+    return value.strip()
+
+
+def valid_solana_pubkey(value: str | None) -> bool:
+    if not value or value.startswith("manual:") or value.startswith("local:"):
+        return False
+    try:
+        decoded = base58.b58decode(value)
+    except Exception:
+        return False
+    return len(decoded) == 32
+
+
+def should_attempt_release(request: VerifyRequest, approved: bool) -> bool:
+    if not approved:
+        return False
+    if os.getenv("CIVICCHAIN_ENABLE_ESCROW_RELEASE", "").lower() not in {"1", "true", "yes"}:
+        return False
+    return all(
+        valid_solana_pubkey(value)
+        for value in (
+            request.complaint_pubkey,
+            request.bid_pubkey,
+            request.escrow_pubkey,
+            request.contractor_pubkey,
+        )
+    )
+
+
+def find_complaint_for_verification(conn: sqlite3.Connection, request: VerifyRequest) -> sqlite3.Row | None:
+    if request.complaint_id is not None:
+        return conn.execute(
+            "SELECT * FROM complaints WHERE id = ?",
+            (request.complaint_id,),
+        ).fetchone()
+    if request.complaint_pubkey:
+        return conn.execute(
+            "SELECT * FROM complaints WHERE complaint_pubkey = ?",
+            (request.complaint_pubkey,),
+        ).fetchone()
+    return None
 
 
 def read_anchor_string(data: bytes, offset: int) -> tuple[str, int]:
@@ -428,37 +489,98 @@ async def helius_webhook(request: Request) -> dict[str, Any]:
 
 @app.post("/verify")
 def verify_complaint(request: VerifyRequest) -> dict[str, Any]:
-    run_ai_workflow = load_ai_workflow()
-    ai_result = run_ai_workflow(
-        request.complaint_text,
-        request.before_image_path,
-        request.after_image_path,
+    init_db()
+    _, verify_submitted_proof = load_ai_verifier()
+
+    with get_db() as conn:
+        row = find_complaint_for_verification(conn, request)
+
+    complaint_text = request.complaint_text or (row["description"] if row else None)
+    complaint_text = require_text(complaint_text, "complaint_text")
+    proof_text = request.proof_text or ""
+    if not proof_text and (request.before_image_name or request.after_image_name):
+        proof_text = (
+            f"Before image: {request.before_image_name or 'not provided'}. "
+            f"After image: {request.after_image_name or 'not provided'}. "
+            "Contractor marked the repair completed."
+        )
+
+    if not proof_text and not (request.before_image_path and request.after_image_path):
+        raise HTTPException(
+            status_code=400,
+            detail="Submit proof_text or both before_image_path and after_image_path",
+        )
+
+    ai_result = verify_submitted_proof(
+        complaint_text=complaint_text,
+        before_image_path=request.before_image_path,
+        after_image_path=request.after_image_path,
+        proof_text=proof_text,
+        proof_hash=request.proof_hash,
     )
 
-    should_release = bool(
-        ai_result.get("fund_decision", {}).get("release_payment")
-    )
+    should_release = should_attempt_release(request, bool(ai_result.get("approved")))
     payment_signature = None
+    payment_error = None
 
     if should_release:
-        release_payment = load_release_payment()
-        payment_signature = release_payment(
-            complaint_pubkey=request.complaint_pubkey,
-            bid_pubkey=request.bid_pubkey,
-            escrow_pubkey=request.escrow_pubkey,
-            contractor_pubkey=request.contractor_pubkey,
-        )
+        try:
+            release_payment = load_release_payment()
+            payment_signature = release_payment(
+                complaint_pubkey=request.complaint_pubkey or "",
+                bid_pubkey=request.bid_pubkey or "",
+                escrow_pubkey=request.escrow_pubkey or "",
+                contractor_pubkey=request.contractor_pubkey or "",
+            )
+        except Exception as exc:
+            payment_error = str(exc)
+            should_release = False
+
+    updated_complaint = None
+    if row is not None:
+        next_status = "Verified" if ai_result.get("approved") else "Completed"
+        with get_db() as conn:
+            conn.execute(
+                """
+                UPDATE complaints
+                SET status = ?,
+                    ai_confidence = ?,
+                    ai_reasoning = ?,
+                    payment_released = ?
+                WHERE id = ?
+                """,
+                (
+                    next_status,
+                    ai_result.get("confidence"),
+                    ai_result.get("reasoning"),
+                    1 if payment_signature else 0,
+                    row["id"],
+                ),
+            )
+            updated = conn.execute(
+                "SELECT * FROM complaints WHERE id = ?",
+                (row["id"],),
+            ).fetchone()
+            updated_complaint = row_to_dict(updated)
 
     return {
         "ai_result": ai_result,
-        "payment_released": should_release,
+        "verdict": ai_result.get("verdict"),
+        "approved": bool(ai_result.get("approved")),
+        "confidence": ai_result.get("confidence"),
+        "payment_released": bool(payment_signature),
         "payment_signature": payment_signature,
+        "payment_error": payment_error,
+        "complaint": updated_complaint,
     }
 
 
 @app.post("/complaint")
 def create_complaint(request: ManualComplaintRequest) -> dict[str, Any]:
     init_db()
+    title = require_text(request.title, "title")
+    description = require_text(request.description, "description")
+    location = require_text(request.location, "location")
     complaint_pubkey = f"manual:{uuid.uuid4()}"
 
     with get_db() as conn:
@@ -485,9 +607,9 @@ def create_complaint(request: ManualComplaintRequest) -> dict[str, Any]:
             (
                 complaint_pubkey,
                 request.citizen_pubkey,
-                request.title,
-                request.description,
-                request.location,
+                title,
+                description,
+                location,
                 request.category or "pothole",
                 "Open",
                 request.photo_url,
@@ -592,6 +714,13 @@ def submit_proof(complaint_id: int, request: ProofRequest) -> dict[str, Any]:
             raise HTTPException(
                 status_code=400,
                 detail="Proof can only be submitted after a bid is assigned",
+            )
+
+        proof_text = request.proof_text or ""
+        if not proof_text and not (request.before_image_name and request.after_image_name):
+            raise HTTPException(
+                status_code=400,
+                detail="Submit proof text or before/after proof image names",
             )
 
         reasoning = "Proof submitted and queued for AI verification."
