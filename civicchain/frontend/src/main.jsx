@@ -1,8 +1,8 @@
 import React, { useMemo } from "react";
 import ReactDOM from "react-dom/client";
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
-import { ConnectionProvider, WalletProvider } from "@solana/wallet-adapter-react";
-import { WalletModalProvider } from "@solana/wallet-adapter-react-ui";
+import { ConnectionProvider, WalletProvider, useWallet } from "@solana/wallet-adapter-react";
+import { WalletModalProvider, WalletMultiButton } from "@solana/wallet-adapter-react-ui";
 import { PhantomWalletAdapter } from "@solana/wallet-adapter-wallets";
 import "@solana/wallet-adapter-react-ui/styles.css";
 import "leaflet/dist/leaflet.css";
@@ -12,7 +12,7 @@ import CitizenPortal from "./pages/CitizenPortal.jsx";
 import ContractorPortal from "./pages/ContractorPortal.jsx";
 import GovernmentPortal from "./pages/GovernmentPortal.jsx";
 import LoginPage from "./pages/LoginPage.jsx";
-import { getSession, pathForRole } from "./services/auth.js";
+import { getSession, pathForRole, clearSession, roles } from "./services/auth.js";
 
 function Providers({ children }) {
   const wallets = useMemo(() => [new PhantomWalletAdapter()], []);
@@ -33,8 +33,49 @@ function HomeRedirect() {
 
 function RequireRole({ role, children }) {
   const session = getSession();
+  const { publicKey, connected } = useWallet();
+  const demoSeed = import.meta.env.VITE_ENABLE_DEMO_SEED === "true";
+
   if (!session) return <Navigate to="/login" replace />;
   if (session.role !== role) return <Navigate to={pathForRole(session.role)} replace />;
+
+  if (!demoSeed) {
+    if (!connected || !publicKey) {
+      return (
+        <div className="flex min-h-[60vh] flex-col items-center justify-center p-6 text-center">
+          <h2 className="text-2xl font-black text-white">Wallet Connection Required</h2>
+          <p className="mt-2 text-slate-400">Please connect your Solana wallet to access the {roles[role]?.label || role} workspace.</p>
+          <div className="mt-6">
+            <WalletMultiButton />
+          </div>
+        </div>
+      );
+    }
+    if (session.id !== publicKey.toBase58()) {
+      return (
+        <div className="flex min-h-[60vh] flex-col items-center justify-center p-6 text-center">
+          <h2 className="text-2xl font-black text-white">Wallet Mismatch</h2>
+          <p className="mt-2 text-slate-400 font-medium max-w-md break-all">
+            Connected wallet ({publicKey.toBase58()}) does not match session ID ({session.id}).
+          </p>
+          <p className="mt-1 text-sm text-slate-500">Please connect the correct wallet or log in again.</p>
+          <div className="mt-6 flex gap-4">
+            <WalletMultiButton />
+            <button
+              onClick={() => {
+                clearSession();
+                window.location.reload();
+              }}
+              className="rounded-lg border border-white/10 px-4 py-2 font-bold text-white hover:bg-white/5"
+            >
+              Back to Login
+            </button>
+          </div>
+        </div>
+      );
+    }
+  }
+
   return children;
 }
 

@@ -206,6 +206,19 @@ def init_db() -> None:
 @app.on_event("startup")
 def on_startup() -> None:
     init_db()
+    if os.getenv("ENABLE_DEMO_SEED", "false").lower() == "true":
+        try:
+            import sys
+            from pathlib import Path
+            root = Path(__file__).resolve().parents[1]
+            if str(root) not in sys.path:
+                sys.path.insert(0, str(root))
+            from integration.seed_demo import main as seed_main
+            print("Auto-seeding demo complaints on startup...")
+            seed_main()
+        except Exception as e:
+            print(f"Failed to auto-seed demo complaints: {e}")
+
 
 
 def row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
@@ -246,13 +259,20 @@ def require_text(value: str | None, field: str) -> str:
 
 
 def valid_solana_pubkey(value: str | None) -> bool:
-    if not value or value.startswith("manual:") or value.startswith("local:"):
+    if not value:
         return False
+    enable_demo = os.getenv("ENABLE_DEMO_SEED", "false").lower() == "true"
+    if enable_demo:
+        if value.startswith("manual:") or value.startswith("local:") or value.startswith("demo:"):
+            return True
+        if "demowallet" in value.lower() or "govofficer" in value.lower() or value == "DemoContractorWallet":
+            return True
     try:
         decoded = base58.b58decode(value)
+        return len(decoded) == 32
     except Exception:
         return False
-    return len(decoded) == 32
+
 
 
 def optional_text(value: str | None) -> str | None:
@@ -963,6 +983,15 @@ def place_bid(complaint_id: int, request: BidRequest) -> dict[str, Any]:
                 detail="Only open or assigned complaints can receive bids",
             )
 
+        contractor_pubkey = request.contractor_pubkey
+        if not contractor_pubkey:
+            if os.getenv("ENABLE_DEMO_SEED", "false").lower() == "true":
+                contractor_pubkey = "DemoContractorWallet"
+            else:
+                raise HTTPException(status_code=400, detail="contractor_pubkey is required")
+        elif not valid_solana_pubkey(contractor_pubkey):
+            raise HTTPException(status_code=400, detail="Invalid contractor public key")
+
         conn.execute(
             """
             UPDATE complaints
@@ -974,7 +1003,7 @@ def place_bid(complaint_id: int, request: BidRequest) -> dict[str, Any]:
             """,
             (
                 request.amount,
-                request.contractor_pubkey or "DemoContractorWallet",
+                contractor_pubkey,
                 request.amount,
                 complaint_id,
             ),
