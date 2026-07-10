@@ -1,13 +1,11 @@
 import { useMemo, useState } from "react";
 import { Link, Route, Routes, useParams } from "react-router-dom";
 import { WalletMultiButton } from "@solana/wallet-adapter-react-ui";
-import { useWallet } from "@solana/wallet-adapter-react";
-import { BarChart3, Coins, FileSearch, Gavel, Map, Table2 } from "lucide-react";
+import { BarChart3, Clock3, Coins, FileSearch, Map, Table2 } from "lucide-react";
 import ComplaintMap from "../components/ComplaintMap";
 import PortalNav from "../components/PortalNav";
 import SessionBanner from "../components/SessionBanner";
 import { Card, EmptyState, ErrorState, LoadingState, StatusBadge, inputClass } from "../components/ui";
-import { acceptLowestBid } from "../services/api";
 import { DetailView, useComplaint, useComplaints } from "./CitizenPortal";
 
 const links = [
@@ -164,42 +162,24 @@ function Funds() {
 function GovDetail() {
   const { id } = useParams();
   const { complaint, loading, error } = useComplaint(id);
-  const { publicKey } = useWallet();
-  const [state, setState] = useState({ complaint: null, loading: false, error: "", notice: "" });
   if (loading) return <LoadingState />;
   if (error) return <ErrorState message={error} />;
-  const current = state.complaint || complaint;
-  const canAward = current.status === "Open" && (current.bids?.length || 0) > 0;
-  const awardLowest = async () => {
-    setState({ complaint: current, loading: true, error: "", notice: "" });
-    try {
-      const updated = await acceptLowestBid(current.id, {
-        government_pubkey: publicKey?.toBase58() || "DemoGovernmentWallet",
-      });
-      setState({ complaint: updated, loading: false, error: "", notice: "Lowest bid selected and work assigned." });
-    } catch (error) {
-      setState({ complaint: current, loading: false, error: error.message, notice: "" });
-    }
-  };
+  const current = complaint;
   return (
     <div className="space-y-6">
       <DetailView complaint={current} back="/government/table" />
       <Card className="p-6">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
-            <h2 className="text-xl font-black">Government Bid Authority</h2>
+            <h2 className="text-xl font-black">Automatic Bid Award</h2>
             <p className="mt-2 text-sm text-slate-400">
-              Select the lowest contractor bid automatically for transparent demo awarding.
+              Every contractor can bid until the citizen deadline. The lowest bid is assigned automatically when the window closes.
             </p>
           </div>
-          <button
-            className="inline-flex items-center gap-2 rounded-lg bg-cyan px-5 py-3 font-black text-navy disabled:opacity-50"
-            disabled={!canAward || state.loading}
-            onClick={awardLowest}
-          >
-            <Gavel className="h-4 w-4" />
-            {state.loading ? "Selecting..." : "Select Lowest Bid"}
-          </button>
+          <div className="inline-flex items-center gap-2 rounded-lg border border-cyan/30 bg-cyan/10 px-4 py-3 text-sm font-black text-cyan">
+            <Clock3 className="h-4 w-4" />
+            {current.status === "Open" ? "Waiting for deadline" : "Award finalized"}
+          </div>
         </div>
         {current.lowest_bid ? (
           <div className="mt-5 rounded-lg border border-success/30 bg-success/10 p-4 text-sm text-success">
@@ -208,8 +188,6 @@ function GovDetail() {
         ) : (
           <p className="mt-5 rounded-lg border border-white/10 bg-white/[0.03] p-4 text-sm text-slate-400">No contractor bids yet.</p>
         )}
-        {state.notice && <p className="mt-4 text-sm font-bold text-success">{state.notice}</p>}
-        {state.error && <p className="mt-4 text-sm font-bold text-danger">{state.error}</p>}
       </Card>
       <Card className="p-6">
         <h2 className="text-xl font-black">Full Timeline</h2>

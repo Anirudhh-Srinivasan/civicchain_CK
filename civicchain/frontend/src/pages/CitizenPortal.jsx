@@ -250,8 +250,8 @@ function verificationLabel(complaint) {
 
 export function useComplaints() {
   const [state, setState] = useState({ data: [], loading: true, error: "" });
-  const refresh = useCallback(async () => {
-    setState((current) => ({ ...current, loading: true, error: "" }));
+  const refresh = useCallback(async ({ silent = false } = {}) => {
+    if (!silent) setState((current) => ({ ...current, loading: true, error: "" }));
     try {
       const data = await getComplaints();
       setState({ data, loading: false, error: "" });
@@ -263,6 +263,8 @@ export function useComplaints() {
   }, []);
   useEffect(() => {
     refresh();
+    const timer = window.setInterval(() => refresh({ silent: true }), 3000);
+    return () => window.clearInterval(timer);
   }, [refresh]);
   return { ...state, refresh };
 }
@@ -270,9 +272,12 @@ export function useComplaints() {
 export function useComplaint(id) {
   const [state, setState] = useState({ complaint: null, loading: true, error: "" });
   useEffect(() => {
-    getComplaint(id)
+    const refresh = () => getComplaint(id)
       .then((complaint) => setState({ complaint, loading: false, error: "" }))
       .catch((error) => setState({ complaint: null, loading: false, error: error.message }));
+    refresh();
+    const timer = window.setInterval(refresh, 3000);
+    return () => window.clearInterval(timer);
   }, [id]);
   return state;
 }

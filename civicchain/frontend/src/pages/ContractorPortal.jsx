@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Route, Routes, useParams } from "react-router-dom";
 import { WalletMultiButton } from "@solana/wallet-adapter-react-ui";
 import { useWallet } from "@solana/wallet-adapter-react";
@@ -53,9 +53,12 @@ function Dashboard() {
             complaint={item}
             detailBase="/contractor/complaints"
             action={
-              <button className="rounded-lg bg-cyan px-4 py-2 text-sm font-black text-navy disabled:opacity-50" disabled={item.bidding_closed} onClick={() => setSelected(item)}>
-                {item.bidding_closed ? "Closed" : "Place Bid"}
-              </button>
+              <div className="flex flex-wrap items-center justify-end gap-3">
+                <BidCountdown deadline={item.bid_deadline} />
+                <button className="rounded-lg bg-cyan px-4 py-2 text-sm font-black text-navy disabled:opacity-50" disabled={item.bidding_closed} onClick={() => setSelected(item)}>
+                  {item.bidding_closed ? "Closed" : "Place Bid"}
+                </button>
+              </div>
             }
           />
         ))}
@@ -158,7 +161,7 @@ function ActiveBids() {
           </div>
           <p className="mt-3 text-sm text-slate-400">
             {bid.status === "Open"
-              ? `${bid.bid_count || 0} bids received. Government can award the lowest bid.`
+              ? `${bid.bid_count || 0} bids received. Lowest bid is assigned automatically when time expires.`
               : `Awarded to ${bid.contractor_pubkey || "selected contractor"}.`}
           </p>
           <Tracker current={trackerStep(bid.status, bid.payment_released)} />
@@ -177,6 +180,25 @@ function formatDateTime(value) {
   } catch {
     return value;
   }
+}
+
+function BidCountdown({ deadline }) {
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, []);
+  if (!deadline) return <span className="text-xs font-bold text-slate-400">No time limit</span>;
+  const remaining = Math.max(0, new Date(deadline).getTime() - now);
+  if (remaining === 0) return <span className="text-xs font-black text-danger">Bidding closed</span>;
+  const minutes = Math.floor(remaining / 60000);
+  const seconds = Math.floor((remaining % 60000) / 1000);
+  return (
+    <span className="inline-flex items-center gap-1 text-xs font-black text-cyan">
+      <Clock3 className="h-3.5 w-3.5" />
+      {minutes}:{String(seconds).padStart(2, "0")} left
+    </span>
+  );
 }
 
 function ProofUpload() {

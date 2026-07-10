@@ -26,7 +26,17 @@ function apiMessage(error) {
 function readLocalComplaints() {
   try {
     const stored = window.localStorage.getItem(localKey);
-    if (stored) return JSON.parse(stored).map(normalizeComplaint);
+    if (stored) {
+      const complaints = JSON.parse(stored).map(normalizeComplaint);
+      let changed = false;
+      const finalized = complaints.map((item) => {
+        const updated = finalizeExpiredComplaint(item);
+        changed ||= updated !== item;
+        return updated;
+      });
+      if (changed) writeLocalComplaints(finalized);
+      return finalized;
+    }
   } catch {
     return [];
   }
@@ -117,10 +127,21 @@ export function normalizeComplaint(item, index = 0) {
   };
 }
 
+function finalizeExpiredComplaint(item) {
+  if (item.status !== "Open" || !item.bidding_closed || !item.lowest_bid) return item;
+  return {
+    ...item,
+    status: "Assigned",
+    bid_amount: Number(item.lowest_bid.amount),
+    estimated_fund: Number(item.lowest_bid.amount),
+    contractor_pubkey: item.lowest_bid.contractor_pubkey,
+  };
+}
+
 export async function getComplaints() {
   try {
     const { data } = await api.get("/complaints");
-    return data.map(normalizeComplaint);
+    return data.map(normalizeComplaint).map(finalizeExpiredComplaint);
   } catch (error) {
     if (isNetworkError(error)) return readLocalComplaints();
     throw new Error(apiMessage(error));
@@ -130,7 +151,7 @@ export async function getComplaints() {
 export async function getComplaint(id) {
   try {
     const { data } = await api.get(`/complaints/${id}`);
-    return normalizeComplaint(data);
+    return finalizeExpiredComplaint(normalizeComplaint(data));
   } catch (error) {
     if (isNetworkError(error)) {
       const item = readLocalComplaints().find((complaint) => String(complaint.id) === String(id));
@@ -206,19 +227,22 @@ export async function placeBid(id, payload) {
     };
   } catch (error) {
     if (!isNetworkError(error)) throw new Error(apiMessage(error));
-    return updateLocalComplaint(id, (item) => ({
-      ...item,
-      bid_amount: Number(payload.amount),
-      estimated_fund: item.estimated_fund || Number(payload.amount),
-      bids: [
-        ...(item.bids || []).filter((bid) => bid.contractor_pubkey !== payload.contractor_pubkey),
-        {
-          amount: Number(payload.amount),
-          contractor_pubkey: payload.contractor_pubkey || "DemoContractorWallet",
-          created_at: new Date().toISOString(),
-        },
-      ],
-    }));
+    return updateLocalComplaint(id, (item) => {
+      if (item.bidding_closed) throw new Error("The citizen bid window is closed");
+      return {
+        ...item,
+        bid_amount: Number(payload.amount),
+        estimated_fund: item.estimated_fund || Number(payload.amount),
+        bids: [
+          ...(item.bids || []).filter((bid) => bid.contractor_pubkey !== payload.contractor_pubkey),
+          {
+            amount: Number(payload.amount),
+            contractor_pubkey: payload.contractor_pubkey || "DemoContractorWallet",
+            created_at: new Date().toISOString(),
+          },
+        ],
+      };
+    });
   }
 }
 

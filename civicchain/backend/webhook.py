@@ -60,7 +60,9 @@ app.add_middleware(
         "http://127.0.0.1:5173",
         "http://localhost:5174",
         "http://127.0.0.1:5174",
+        "https://civicchain-ck.vercel.app",
     ],
+    allow_origin_regex=r"https://.*\.vercel\.app",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -268,6 +270,35 @@ def is_bid_window_closed(value: str | None) -> bool:
     if deadline.tzinfo is None:
         deadline = deadline.replace(tzinfo=timezone.utc)
     return datetime.now(timezone.utc) > deadline
+
+
+def assign_expired_lowest_bids(
+    conn: sqlite3.Connection,
+    complaint_id: int | None = None,
+) -> None:
+    query = "SELECT * FROM complaints WHERE status = 'Open' AND bid_deadline IS NOT NULL"
+    params: tuple[Any, ...] = ()
+    if complaint_id is not None:
+        query += " AND id = ?"
+        params = (complaint_id,)
+
+    for row in conn.execute(query, params).fetchall():
+        if not is_bid_window_closed(row["bid_deadline"]):
+            continue
+        bid = lowest_bid(parse_bids(row["bids_json"]))
+        if bid is None:
+            continue
+        conn.execute(
+            """
+            UPDATE complaints
+            SET status = 'Assigned',
+                bid_amount = ?,
+                contractor_pubkey = ?,
+                estimated_fund = ?
+            WHERE id = ? AND status = 'Open'
+            """,
+            (bid["amount"], bid["contractor_pubkey"], bid["amount"], row["id"]),
+        )
 
 
 def row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
@@ -1005,6 +1036,7 @@ def create_complaint(request: ManualComplaintRequest) -> dict[str, Any]:
 def list_complaints() -> list[dict[str, Any]]:
     init_db()
     with get_db() as conn:
+        assign_expired_lowest_bids(conn)
         rows = conn.execute(
             "SELECT * FROM complaints ORDER BY id DESC"
         ).fetchall()
@@ -1015,6 +1047,7 @@ def list_complaints() -> list[dict[str, Any]]:
 def get_complaint(complaint_id: int) -> dict[str, Any]:
     init_db()
     with get_db() as conn:
+        assign_expired_lowest_bids(conn, complaint_id)
         row = conn.execute(
             "SELECT * FROM complaints WHERE id = ?",
             (complaint_id,),
@@ -1033,6 +1066,7 @@ def place_bid(complaint_id: int, request: BidRequest) -> dict[str, Any]:
         raise HTTPException(status_code=400, detail="Bid amount must be greater than zero")
 
     with get_db() as conn:
+        assign_expired_lowest_bids(conn, complaint_id)
         row = conn.execute(
             "SELECT * FROM complaints WHERE id = ?",
             (complaint_id,),
@@ -1097,44 +1131,24 @@ def place_bid(complaint_id: int, request: BidRequest) -> dict[str, Any]:
 def accept_lowest_bid(complaint_id: int, request: AcceptLowestBidRequest) -> dict[str, Any]:
     init_db()
     with get_db() as conn:
+        assign_expired_lowest_bids(conn, complaint_id)
         row = conn.execute(
             "SELECT * FROM complaints WHERE id = ?",
             (complaint_id,),
         ).fetchone()
         if row is None:
             raise HTTPException(status_code=404, detail="Complaint not found")
-        if row["status"] not in ("Open", "Assigned"):
+        if row["status"] == "Assigned":
+            return row_to_dict(row)
+        if row["status"] != "Open":
             raise HTTPException(
                 status_code=400,
                 detail="Only open complaints with bids can be awarded",
             )
-
-        bid = lowest_bid(parse_bids(row["bids_json"]))
-        if bid is None:
-            raise HTTPException(status_code=400, detail="No contractor bids are available")
-
-        conn.execute(
-            """
-            UPDATE complaints
-            SET status = 'Assigned',
-                bid_amount = ?,
-                contractor_pubkey = ?,
-                estimated_fund = ?
-            WHERE id = ?
-            """,
-            (
-                bid["amount"],
-                bid["contractor_pubkey"],
-                bid["amount"],
-                complaint_id,
-            ),
+        raise HTTPException(
+            status_code=400,
+            detail="The lowest bid is assigned automatically after the citizen deadline",
         )
-        updated = conn.execute(
-            "SELECT * FROM complaints WHERE id = ?",
-            (complaint_id,),
-        ).fetchone()
-
-    return row_to_dict(updated)
 
 
 @app.post("/complaints/{complaint_id}/proof")
