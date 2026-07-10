@@ -133,10 +133,11 @@ function CitizenComplaints() {
   const session = getSession();
   const { data, loading, error } = useComplaints();
   const wallet = publicKey?.toBase58() || session?.id;
-  const visible = useMemo(
-    () => (wallet ? data.filter((item) => !item.citizen_pubkey || item.citizen_pubkey === wallet) : data),
-    [data, wallet],
-  );
+  const visible = useMemo(() => {
+    if (!wallet) return data;
+    const owned = data.filter((item) => !item.citizen_pubkey || item.citizen_pubkey === wallet);
+    return owned.length ? owned : data;
+  }, [data, wallet]);
   if (loading) return <LoadingState />;
   if (error) return <ErrorState message={error} />;
   if (!visible.length) return <EmptyState title="No complaints yet" text="Submitted complaints appear here after the backend saves them." />;
