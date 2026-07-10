@@ -1,5 +1,7 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
+import { useWallet } from "@solana/wallet-adapter-react";
+import { WalletMultiButton } from "@solana/wallet-adapter-react-ui";
 import {
   Activity,
   Building2,
@@ -14,6 +16,7 @@ import {
 import { getLoginAudit, roles, saveSession, validateLogin } from "../services/auth";
 import { Card, Field, inputClass } from "../components/ui";
 
+
 const roleIcons = {
   citizen: Building2,
   contractor: HardHat,
@@ -22,11 +25,23 @@ const roleIcons = {
 
 export default function LoginPage() {
   const navigate = useNavigate();
+  const { publicKey, connected } = useWallet();
   const [role, setRole] = useState("citizen");
   const [id, setId] = useState("");
   const [error, setError] = useState("");
   const selected = roles[role];
   const audit = getLoginAudit();
+
+  const demoModeEnabled = import.meta.env.VITE_ENABLE_DEMO_SEED === "true";
+
+  useEffect(() => {
+    if (!demoModeEnabled && connected && publicKey) {
+      setId(publicKey.toBase58());
+      setError("");
+    } else if (!demoModeEnabled && !connected) {
+      setId("");
+    }
+  }, [connected, publicKey, demoModeEnabled]);
 
   const examples = useMemo(
     () => Object.entries(roles).map(([key, item]) => ({ key, ...item, icon: roleIcons[key] })),
@@ -35,18 +50,20 @@ export default function LoginPage() {
 
   const submit = (event) => {
     event.preventDefault();
-    const validation = validateLogin(role, id);
+    const loginId = demoModeEnabled ? id : (publicKey ? publicKey.toBase58() : "");
+    const validation = validateLogin(role, loginId);
     if (validation) {
       setError(validation);
       return;
     }
     try {
-      const session = saveSession(role, id);
+      const session = saveSession(role, loginId);
       navigate(roles[session.role].path, { replace: true });
     } catch (error) {
       setError(error.message);
     }
   };
+
 
   return (
     <main className="min-h-screen bg-[linear-gradient(145deg,#07111f_0%,#0b1426_48%,#111827_100%)] px-4 py-6">
@@ -126,23 +143,43 @@ export default function LoginPage() {
                 ))}
               </div>
 
-              <Field label={selected.idLabel}>
-                <input
-                  className={inputClass}
-                  value={id}
-                  placeholder={selected.placeholder}
-                  autoComplete="username"
-                  onChange={(event) => {
-                    setId(event.target.value);
-                    setError("");
-                  }}
-                />
-              </Field>
+              {demoModeEnabled ? (
+                <>
+                  <Field label={selected.idLabel}>
+                    <input
+                      className={inputClass}
+                      value={id}
+                      placeholder={selected.placeholder}
+                      autoComplete="username"
+                      onChange={(event) => {
+                        setId(event.target.value);
+                        setError("");
+                      }}
+                    />
+                  </Field>
 
-              <div className="rounded-lg border border-white/10 bg-navy/50 p-4 text-sm text-slate-300">
-                <p className="font-bold text-white">ID policy</p>
-                <p className="mt-1">{selected.hint}</p>
-              </div>
+                  <div className="rounded-lg border border-white/10 bg-navy/50 p-4 text-sm text-slate-300">
+                    <p className="font-bold text-white">ID policy</p>
+                    <p className="mt-1">{selected.hint}</p>
+                  </div>
+                </>
+              ) : (
+                <div className="space-y-4">
+                  <div className="rounded-lg border border-white/10 bg-navy/50 p-4 text-sm text-slate-300">
+                    <p className="font-bold text-white">Wallet Connection Required</p>
+                    <p className="mt-1">Connect your Solana wallet to log in to this workspace.</p>
+                  </div>
+                  <div className="flex justify-center">
+                    <WalletMultiButton />
+                  </div>
+                  {connected && publicKey && (
+                    <div className="rounded-lg border border-success/30 bg-success/10 p-3 text-center text-sm font-bold text-success truncate">
+                      Connected: {publicKey.toBase58()}
+                    </div>
+                  )}
+                </div>
+              )}
+
 
               {error && <p className="rounded-lg border border-danger/30 bg-danger/10 px-4 py-3 text-sm font-bold text-danger">{error}</p>}
 
@@ -159,8 +196,8 @@ export default function LoginPage() {
               <div className="mt-4 space-y-3 text-sm text-slate-300">
                 <PolicyRow label="Role isolation" value="Enabled" />
                 <PolicyRow label="Expiry window" value="8 hours" />
-                <PolicyRow label="Wallet optional" value="Fallback ID active" />
-                <PolicyRow label="Backend guard" value="Demo mode" />
+                <PolicyRow label="Wallet optional" value={demoModeEnabled ? "Fallback ID active" : "Required"} />
+                <PolicyRow label="Backend guard" value={demoModeEnabled ? "Demo mode" : "Production"} />
               </div>
             </Card>
 

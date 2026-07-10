@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import { Link, Route, Routes, useParams } from "react-router-dom";
+import { WalletMultiButton } from "@solana/wallet-adapter-react-ui";
 import { BarChart3, Coins, FileSearch, Map, Table2 } from "lucide-react";
 import ComplaintMap from "../components/ComplaintMap";
 import PortalNav from "../components/PortalNav";
@@ -18,6 +19,9 @@ export default function GovernmentPortal() {
   return (
     <div className="page-enter">
       <SessionBanner role="government" />
+      <div className="mb-6 flex justify-end">
+        <WalletMultiButton />
+      </div>
       <PortalNav links={links} />
       <Routes>
         <Route index element={<Overview />} />
