@@ -9,7 +9,21 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-DB_PATH = ROOT / "backend" / "complaints.db"
+
+
+def database_path() -> Path:
+    configured = os.getenv("CIVICCHAIN_DB_PATH")
+    if configured:
+        return Path(configured).resolve()
+
+    data_root = os.getenv("RAILWAY_VOLUME_MOUNT_PATH") or os.getenv("CIVICCHAIN_DATA_ROOT")
+    if data_root:
+        return (Path(data_root) / "complaints.db").resolve()
+
+    return ROOT / "backend" / "complaints.db"
+
+
+DB_PATH = database_path()
 
 
 
