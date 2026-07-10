@@ -49,7 +49,8 @@ function CitizenHome() {
     setState({ loading: true, error: "", saved: null });
     try {
       const coordinates = await geocodeAddress(form.location);
-      const bidDeadline = new Date(Date.now() + Number(bidHours) * 60 * 60 * 1000).toISOString();
+      const durationHours = Math.max(1, Number(bidHours) || 24);
+      const bidDeadline = new Date(Date.now() + durationHours * 60 * 60 * 1000).toISOString();
       const saved = await createComplaint({
         ...form,
         ...(coordinates
@@ -111,14 +112,18 @@ function CitizenHome() {
         <Field label="Contractor bidding window">
           <div className="relative">
             <Clock3 className="pointer-events-none absolute left-3 top-3.5 h-4 w-4 text-cyan" />
-            <select className={`${inputClass} pl-10`} value={bidHours} onChange={(e) => setBidHours(e.target.value)}>
-              <option value="6">6 hours</option>
-              <option value="12">12 hours</option>
-              <option value="24">24 hours</option>
-              <option value="48">48 hours</option>
-              <option value="72">72 hours</option>
-            </select>
+            <input
+              className={`${inputClass} pl-10`}
+              min="1"
+              max="720"
+              step="1"
+              type="number"
+              value={bidHours}
+              onChange={(e) => setBidHours(e.target.value)}
+              placeholder="Enter hours"
+            />
           </div>
+          <p className="mt-2 text-xs text-slate-500">Enter any custom duration in hours.</p>
         </Field>
         <Field label="Photo Upload">
           <label className="flex cursor-pointer items-center justify-between rounded-lg border border-dashed border-white/20 bg-navy/70 px-4 py-4 text-sm text-slate-300">
