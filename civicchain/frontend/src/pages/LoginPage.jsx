@@ -18,6 +18,7 @@ import {
   generateCitizenId,
   getLoginAudit,
   getSavedCitizenId,
+  isDemoMode,
   roles,
   saveCitizenId,
   saveSession,
@@ -41,7 +42,7 @@ export default function LoginPage() {
   const selected = roles[role];
   const audit = getLoginAudit();
 
-  const demoModeEnabled = import.meta.env.VITE_ENABLE_DEMO_SEED === "true";
+  const demoModeEnabled = isDemoMode();
 
   useEffect(() => {
     if (role === "citizen") return; // citizens use a generated ID, not a wallet
@@ -139,6 +140,11 @@ export default function LoginPage() {
                     }`}
                     onClick={() => {
                       setRole(key);
+                      if (demoModeEnabled && key !== "citizen") {
+                        setId(roles[key].placeholder);
+                      } else if (key === "citizen") {
+                        setId(getSavedCitizenId() || "");
+                      }
                       setError("");
                     }}
                   >

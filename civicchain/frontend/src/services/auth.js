@@ -38,6 +38,10 @@ export const roles = {
 const citizenIdKey = "civicchain:citizen-id";
 const citizenIdPattern = /^CTZ-[A-Z0-9]{6}$/;
 
+export function isDemoMode() {
+  return import.meta.env.VITE_ENABLE_DEMO_SEED !== "false";
+}
+
 export function generateCitizenId() {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
   let code = "";
@@ -88,7 +92,7 @@ export function validateLogin(role, id) {
   if (role === "citizen") {
     if (!normalized) return "Enter your Citizen ID, or generate a new one below.";
     if (citizenIdPattern.test(normalized)) return "";
-    const demoSeed = import.meta.env.VITE_ENABLE_DEMO_SEED === "true";
+    const demoSeed = isDemoMode();
     if (demoSeed && selected.pattern.test(normalized)) return "";
     return "Enter a valid Citizen ID (e.g. CTZ-AB12CD), or generate a new one below.";
   }
@@ -101,7 +105,7 @@ export function validateLogin(role, id) {
   }
 
   // Demo placeholders are only allowed if demo seed is enabled
-  const demoSeed = import.meta.env.VITE_ENABLE_DEMO_SEED === "true";
+  const demoSeed = isDemoMode();
   if (demoSeed && selected.pattern.test(normalized)) {
     return "";
   }

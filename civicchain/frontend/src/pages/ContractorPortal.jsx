@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { Route, Routes } from "react-router-dom";
+import { Route, Routes, useParams } from "react-router-dom";
 import { WalletMultiButton } from "@solana/wallet-adapter-react-ui";
 import { useWallet } from "@solana/wallet-adapter-react";
 import { BriefcaseBusiness, CheckCircle2, LayoutDashboard, Upload } from "lucide-react";
@@ -9,7 +9,7 @@ import SessionBanner from "../components/SessionBanner";
 import { Card, EmptyState, ErrorState, Field, LoadingState, inputClass } from "../components/ui";
 import { placeBid, submitProof } from "../services/api";
 import { getSession } from "../services/auth";
-import { useComplaints } from "./CitizenPortal";
+import { DetailView, useComplaint, useComplaints } from "./CitizenPortal";
 
 const links = [
   { to: "/contractor", label: "Dashboard", icon: LayoutDashboard },
@@ -29,6 +29,7 @@ export default function ContractorPortal() {
         <Route index element={<Dashboard />} />
         <Route path="bids" element={<ActiveBids />} />
         <Route path="proof" element={<ProofUpload />} />
+        <Route path="complaints/:id" element={<ContractorDetail />} />
       </Routes>
     </div>
   );
@@ -50,7 +51,7 @@ function Dashboard() {
           <ComplaintCard
             key={item.id}
             complaint={item}
-            detailBase="/citizen/complaints"
+            detailBase="/contractor/complaints"
             action={
               <button className="rounded-lg bg-cyan px-4 py-2 text-sm font-black text-navy" onClick={() => setSelected(item)}>
                 Place Bid
@@ -72,6 +73,14 @@ function Dashboard() {
       )}
     </>
   );
+}
+
+function ContractorDetail() {
+  const { id } = useParams();
+  const { complaint, loading, error } = useComplaint(id);
+  if (loading) return <LoadingState />;
+  if (error) return <ErrorState message={error} />;
+  return <DetailView complaint={complaint} back="/contractor" />;
 }
 
 function BidModal({ complaint, onClose, onSaved }) {

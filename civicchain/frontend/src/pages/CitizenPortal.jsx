@@ -9,7 +9,7 @@ import PortalNav from "../components/PortalNav";
 import SessionBanner from "../components/SessionBanner";
 import { Card, EmptyState, ErrorState, Field, LoadingState, StatusBadge, inputClass } from "../components/ui";
 import { createComplaint, getComplaint, getComplaints } from "../services/api";
-import { getSession } from "../services/auth";
+import { getSession, isDemoMode } from "../services/auth";
 import { geocodeAddress } from "../services/geo";
 
 const links = [
@@ -136,7 +136,9 @@ function CitizenComplaints() {
   const visible = useMemo(() => {
     if (!wallet) return data;
     const owned = data.filter((item) => !item.citizen_pubkey || item.citizen_pubkey === wallet);
-    return owned.length ? owned : data;
+    if (!isDemoMode()) return owned;
+    const otherDemo = data.filter((item) => item.citizen_pubkey && item.citizen_pubkey !== wallet);
+    return [...owned, ...otherDemo];
   }, [data, wallet]);
   if (loading) return <LoadingState />;
   if (error) return <ErrorState message={error} />;
