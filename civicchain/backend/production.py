@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import os
+import shutil
 from pathlib import Path
 
+from fastapi import Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
 
@@ -53,3 +55,20 @@ def health() -> dict[str, str]:
         "status": "ok",
         "service": "CivicChain Backend",
     }
+
+
+@app.post("/admin/reset-data", tags=["system"])
+def reset_data(x_admin_token: str | None = Header(None)) -> dict[str, int | bool]:
+    expected = os.getenv("CIVICCHAIN_ADMIN_TOKEN")
+    if not expected or x_admin_token != expected:
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    webhook.init_db()
+    with webhook.get_db() as conn:
+        before = conn.execute("SELECT COUNT(*) FROM complaints").fetchone()[0]
+        conn.execute("DELETE FROM complaints")
+        conn.execute("DELETE FROM sqlite_sequence WHERE name = 'complaints'")
+
+    shutil.rmtree(webhook.UPLOAD_ROOT, ignore_errors=True)
+    webhook.UPLOAD_ROOT.mkdir(parents=True, exist_ok=True)
+    return {"ok": True, "deleted": before}
