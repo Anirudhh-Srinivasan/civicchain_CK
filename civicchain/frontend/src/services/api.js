@@ -1,7 +1,11 @@
 import axios from "axios";
 
+const defaultApiUrl = import.meta.env.DEV
+  ? "http://localhost:8000"
+  : "https://civicchain-backend-production.up.railway.app";
+
 export const api = axios.create({
-  baseURL: import.meta.env.VITE_API_URL || "http://localhost:8000",
+  baseURL: import.meta.env.VITE_API_URL || defaultApiUrl,
   timeout: 12000,
 });
 
