@@ -264,14 +264,14 @@ function ProofUpload() {
 }
 
 function trackerStep(status, paymentReleased = false) {
-  if (paymentReleased) return 5;
-  return { Open: 1, Assigned: 2, Completed: 3, Verified: 4 }[status] ?? 1;
+  if (paymentReleased) return 4;
+  return { Open: 1, Assigned: 2, Completed: 2, Verified: 3 }[status] ?? 1;
 }
 
 function Tracker({ current }) {
-  const steps = ["Bid Placed", "Accepted", "Work Done", "AI Verified", "Payment Released"];
+  const steps = ["Bid Placed", "Accepted", "AI Verified", "Payment Released"];
   return (
-    <div className="mt-6 grid gap-3 sm:grid-cols-5">
+    <div className="mt-6 grid gap-3 sm:grid-cols-4">
       {steps.map((step, index) => (
         <div key={step} className={`rounded-lg border p-3 text-sm ${index < current ? "border-success/40 bg-success/10 text-success" : "border-white/10 text-slate-500"}`}>
           <CheckCircle2 className="mb-2 h-4 w-4" />

@@ -188,7 +188,22 @@ export async function verifyComplaint(payload) {
 export async function placeBid(id, payload) {
   try {
     const { data } = await api.post(`/complaints/${id}/bid`, payload);
-    return normalizeComplaint(data);
+    const complaint = normalizeComplaint(data);
+    const submittedBid = {
+      amount: Number(payload.amount),
+      contractor_pubkey: payload.contractor_pubkey || "DemoContractorWallet",
+      created_at: new Date().toISOString(),
+    };
+    const bids = complaint.bids?.length ? complaint.bids : [submittedBid];
+    const lowest = bids.reduce((best, bid) => (!best || bid.amount < best.amount ? bid : best), null);
+    return {
+      ...complaint,
+      status: "Open",
+      contractor_pubkey: null,
+      bids,
+      bid_count: bids.length,
+      lowest_bid: lowest,
+    };
   } catch (error) {
     if (!isNetworkError(error)) throw new Error(apiMessage(error));
     return updateLocalComplaint(id, (item) => ({
