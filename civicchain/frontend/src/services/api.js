@@ -57,6 +57,13 @@ export function normalizeComplaint(item, index = 0) {
   const status = item.status || statusCycle[index % statusCycle.length];
   const category = item.category || categoryCycle[index % categoryCycle.length];
   const demoSeed = isDemoMode();
+  const bids = Array.isArray(item.bids)
+    ? item.bids.map((bid) => ({
+        ...bid,
+        amount: Number(bid.amount),
+      })).filter((bid) => Number.isFinite(bid.amount))
+    : [];
+  const lowestBid = item.lowest_bid || bids.reduce((best, bid) => (!best || bid.amount < best.amount ? bid : best), null);
 
   return {
     ...item,
@@ -100,6 +107,16 @@ export function normalizeComplaint(item, index = 0) {
     contractor_pubkey:
       item.contractor_pubkey ||
       (status === "Open" || !demoSeed ? null : "DemoContractorWallet9x8"),
+    bid_deadline: item.bid_deadline || null,
+    bids,
+    bid_count: item.bid_count ?? bids.length,
+    lowest_bid: lowestBid
+      ? {
+          ...lowestBid,
+          amount: Number(lowestBid.amount),
+        }
+      : null,
+    bidding_closed: Boolean(item.bidding_closed || (item.bid_deadline && Date.now() > new Date(item.bid_deadline).getTime())),
   };
 }
 
@@ -139,6 +156,7 @@ export async function createComplaint(payload) {
       appendFormValue(form, "citizen_pubkey", payload.citizen_pubkey);
       appendFormValue(form, "latitude", payload.latitude);
       appendFormValue(form, "longitude", payload.longitude);
+      appendFormValue(form, "bid_deadline", payload.bid_deadline);
       form.append("photo", photoFile);
       ({ data } = await api.post("/complaint-upload", form));
     } else {
@@ -156,6 +174,8 @@ export async function createComplaint(payload) {
       complaint_pubkey: `local:${crypto.randomUUID?.() || Date.now()}`,
       status: "Open",
       estimated_fund: 0.35,
+      bid_deadline: payload.bid_deadline,
+      bids: [],
       created_at: new Date().toISOString(),
     });
     writeLocalComplaints([saved, ...items]);
@@ -176,11 +196,38 @@ export async function placeBid(id, payload) {
     if (!isNetworkError(error)) throw new Error(apiMessage(error));
     return updateLocalComplaint(id, (item) => ({
       ...item,
-      status: "Assigned",
       bid_amount: Number(payload.amount),
       estimated_fund: item.estimated_fund || Number(payload.amount),
-      contractor_pubkey: payload.contractor_pubkey || "DemoContractorWallet",
+      bids: [
+        ...(item.bids || []).filter((bid) => bid.contractor_pubkey !== payload.contractor_pubkey),
+        {
+          amount: Number(payload.amount),
+          contractor_pubkey: payload.contractor_pubkey || "DemoContractorWallet",
+          created_at: new Date().toISOString(),
+        },
+      ],
     }));
+  }
+}
+
+export async function acceptLowestBid(id, payload = {}) {
+  try {
+    const { data } = await api.post(`/complaints/${id}/accept-lowest-bid`, payload);
+    return normalizeComplaint(data);
+  } catch (error) {
+    if (!isNetworkError(error)) throw new Error(apiMessage(error));
+    return updateLocalComplaint(id, (item) => {
+      const bids = item.bids || [];
+      const lowest = bids.reduce((best, bid) => (!best || bid.amount < best.amount ? bid : best), null);
+      if (!lowest) throw new Error("No contractor bids are available");
+      return {
+        ...item,
+        status: "Assigned",
+        bid_amount: Number(lowest.amount),
+        estimated_fund: Number(lowest.amount),
+        contractor_pubkey: lowest.contractor_pubkey,
+      };
+    });
   }
 }
 

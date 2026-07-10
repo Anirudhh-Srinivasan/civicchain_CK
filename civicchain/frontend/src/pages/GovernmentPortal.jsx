@@ -1,11 +1,13 @@
 import { useMemo, useState } from "react";
 import { Link, Route, Routes, useParams } from "react-router-dom";
 import { WalletMultiButton } from "@solana/wallet-adapter-react-ui";
-import { BarChart3, Coins, FileSearch, Map, Table2 } from "lucide-react";
+import { useWallet } from "@solana/wallet-adapter-react";
+import { BarChart3, Coins, FileSearch, Gavel, Map, Table2 } from "lucide-react";
 import ComplaintMap from "../components/ComplaintMap";
 import PortalNav from "../components/PortalNav";
 import SessionBanner from "../components/SessionBanner";
 import { Card, EmptyState, ErrorState, LoadingState, StatusBadge, inputClass } from "../components/ui";
+import { acceptLowestBid } from "../services/api";
 import { DetailView, useComplaint, useComplaints } from "./CitizenPortal";
 
 const links = [
@@ -40,14 +42,14 @@ function Overview() {
   if (error) return <ErrorState message={error} />;
   const resolved = data.filter((item) => item.status === "Verified").length;
   const pending = data.filter((item) => item.status !== "Verified").length;
-  const released = data.filter((item) => item.payment_released).reduce((sum, item) => sum + item.estimated_fund, 0);
+  const bidCount = data.reduce((sum, item) => sum + (item.bid_count || 0), 0);
   return (
     <div className="space-y-6">
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <Stat label="Total complaints" value={data.length} />
         <Stat label="Resolved this month" value={resolved} tone="success" />
         <Stat label="Pending" value={pending} tone="cyan" />
-        <Stat label="Funds released" value={`${released.toFixed(2)} SOL`} tone="success" />
+        <Stat label="Contractor bids" value={bidCount} tone="cyan" />
       </div>
       <ComplaintsTable compact />
     </div>
@@ -103,14 +105,15 @@ function ComplaintsTable({ compact = false }) {
         </div>
       )}
       <div className="overflow-x-auto">
-        <table className="w-full min-w-[760px] text-left text-sm">
+        <table className="w-full min-w-[900px] text-left text-sm">
           <thead className="bg-white/[0.04] text-xs uppercase tracking-widest text-slate-400">
             <tr>
               <th className="px-4 py-3">Complaint</th>
               <th className="px-4 py-3">Category</th>
               <th className="px-4 py-3">Location</th>
               <th className="px-4 py-3">Status</th>
-              <th className="px-4 py-3">AI</th>
+              <th className="px-4 py-3">Lowest bid</th>
+              <th className="px-4 py-3">Bids</th>
               <th className="px-4 py-3">Action</th>
             </tr>
           </thead>
@@ -121,7 +124,8 @@ function ComplaintsTable({ compact = false }) {
                 <td className="px-4 py-4 text-slate-300">{item.category}</td>
                 <td className="px-4 py-4 text-slate-300">{item.location}</td>
                 <td className="px-4 py-4"><StatusBadge status={item.status} /></td>
-                <td className="px-4 py-4 text-cyan">{aiLabel(item)}</td>
+                <td className="px-4 py-4 text-success">{item.lowest_bid ? `${item.lowest_bid.amount.toFixed(2)} SOL` : "None"}</td>
+                <td className="px-4 py-4 text-cyan">{item.bid_count || 0}</td>
                 <td className="px-4 py-4">
                   <Link className="inline-flex items-center gap-2 font-bold text-cyan" to={`/government/complaints/${item.id}`}>
                     <FileSearch className="h-4 w-4" /> View
@@ -160,16 +164,58 @@ function Funds() {
 function GovDetail() {
   const { id } = useParams();
   const { complaint, loading, error } = useComplaint(id);
+  const { publicKey } = useWallet();
+  const [state, setState] = useState({ complaint: null, loading: false, error: "", notice: "" });
   if (loading) return <LoadingState />;
   if (error) return <ErrorState message={error} />;
+  const current = state.complaint || complaint;
+  const canAward = current.status === "Open" && (current.bids?.length || 0) > 0;
+  const awardLowest = async () => {
+    setState({ complaint: current, loading: true, error: "", notice: "" });
+    try {
+      const updated = await acceptLowestBid(current.id, {
+        government_pubkey: publicKey?.toBase58() || "DemoGovernmentWallet",
+      });
+      setState({ complaint: updated, loading: false, error: "", notice: "Lowest bid selected and work assigned." });
+    } catch (error) {
+      setState({ complaint: current, loading: false, error: error.message, notice: "" });
+    }
+  };
   return (
     <div className="space-y-6">
-      <DetailView complaint={complaint} back="/government/table" />
+      <DetailView complaint={current} back="/government/table" />
+      <Card className="p-6">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <h2 className="text-xl font-black">Government Bid Authority</h2>
+            <p className="mt-2 text-sm text-slate-400">
+              Select the lowest contractor bid automatically for transparent demo awarding.
+            </p>
+          </div>
+          <button
+            className="inline-flex items-center gap-2 rounded-lg bg-cyan px-5 py-3 font-black text-navy disabled:opacity-50"
+            disabled={!canAward || state.loading}
+            onClick={awardLowest}
+          >
+            <Gavel className="h-4 w-4" />
+            {state.loading ? "Selecting..." : "Select Lowest Bid"}
+          </button>
+        </div>
+        {current.lowest_bid ? (
+          <div className="mt-5 rounded-lg border border-success/30 bg-success/10 p-4 text-sm text-success">
+            Lowest: {current.lowest_bid.amount.toFixed(2)} SOL from {current.lowest_bid.contractor_pubkey}
+          </div>
+        ) : (
+          <p className="mt-5 rounded-lg border border-white/10 bg-white/[0.03] p-4 text-sm text-slate-400">No contractor bids yet.</p>
+        )}
+        {state.notice && <p className="mt-4 text-sm font-bold text-success">{state.notice}</p>}
+        {state.error && <p className="mt-4 text-sm font-bold text-danger">{state.error}</p>}
+      </Card>
       <Card className="p-6">
         <h2 className="text-xl font-black">Full Timeline</h2>
         <div className="mt-4 grid gap-3 md:grid-cols-5">
           {["Submitted", "Bid", "Accepted", "Verified", "Paid"].map((step, index) => (
-            <div key={step} className={`rounded-lg border p-3 text-sm ${index <= timelineIndex(complaint) ? "border-success/40 bg-success/10 text-success" : "border-white/10 text-slate-500"}`}>
+            <div key={step} className={`rounded-lg border p-3 text-sm ${index <= timelineIndex(current) ? "border-success/40 bg-success/10 text-success" : "border-white/10 text-slate-500"}`}>
               {step}
             </div>
           ))}
@@ -188,5 +234,6 @@ function aiLabel(item) {
 
 function timelineIndex(complaint) {
   if (complaint.payment_released) return 4;
+  if (complaint.status === "Open" && (complaint.bids?.length || 0) > 0) return 1;
   return { Open: 0, Assigned: 2, Completed: 2, Verified: 3 }[complaint.status] ?? 0;
 }
