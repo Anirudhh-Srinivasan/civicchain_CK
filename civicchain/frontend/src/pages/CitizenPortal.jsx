@@ -62,24 +62,21 @@ function CitizenHome() {
   };
 
   return (
-    <div className="grid gap-6 lg:grid-cols-[1fr_0.9fr]">
-      <section className="rounded-lg border border-cyan/20 bg-cyan/10 p-8">
-        <p className="text-sm font-bold uppercase tracking-[0.2em] text-cyan">Citizen Portal</p>
-        <h1 className="mt-4 max-w-3xl text-4xl font-black leading-tight text-white md:text-6xl">
-          Report civic issues, get them fixed on-chain
-        </h1>
-        <p className="mt-5 max-w-2xl text-lg text-slate-300">
-          Submit verified local complaints, track contractor progress, and see escrow payments released transparently on Solana.
-        </p>
-        <div className="mt-8">
-          <WalletMultiButton />
-        </div>
-      </section>
+    <div className="mx-auto max-w-3xl">
       <Card className="p-6">
         <form className="space-y-4" onSubmit={submit}>
-          <div className="flex items-center gap-3">
-            <Send className="h-5 w-5 text-cyan" />
-            <h2 className="text-xl font-black">Submit Complaint</h2>
+          <div className="flex flex-wrap items-start justify-between gap-4">
+            <div>
+              <p className="text-sm font-bold uppercase tracking-[0.2em] text-cyan">Citizen Portal</p>
+              <div className="mt-2 flex items-center gap-3">
+                <Send className="h-5 w-5 text-cyan" />
+                <h1 className="text-2xl font-black">Submit Complaint</h1>
+              </div>
+              <p className="mt-2 text-sm text-slate-400">
+                Report a civic issue and track it from My Complaints.
+              </p>
+            </div>
+            <WalletMultiButton />
           </div>
           <Field label="Title">
             <input className={inputClass} required value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} />
