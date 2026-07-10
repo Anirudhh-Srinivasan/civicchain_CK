@@ -84,8 +84,8 @@ export default function LoginPage() {
 
   return (
     <main className="min-h-screen bg-[linear-gradient(145deg,#07111f_0%,#0b1426_48%,#111827_100%)] px-4 py-5 lg:py-6">
-      <div className="mx-auto grid min-h-[calc(100vh-2.5rem)] max-w-6xl items-center gap-5 lg:grid-cols-[0.82fr_1.18fr]">
-        <section className="flex flex-col justify-between gap-7 rounded-lg border border-white/10 bg-white/[0.035] p-6 lg:min-h-[620px] lg:p-7">
+      <div className="mx-auto grid min-h-[calc(100vh-2.5rem)] max-w-[1060px] content-center items-start gap-5 lg:grid-cols-[17rem_minmax(0,1fr)] xl:grid-cols-[17rem_minmax(0,1fr)_18rem]">
+        <section className="flex flex-col justify-between gap-7 rounded-lg border border-white/10 bg-white/[0.035] p-6 lg:min-h-[640px] lg:p-7">
           <div className="flex items-center gap-3">
             <div className="grid h-11 w-11 place-items-center rounded-lg bg-cyan text-navy">
               <ShieldCheck className="h-6 w-6" />
@@ -116,21 +116,20 @@ export default function LoginPage() {
           </div>
         </section>
 
-        <div className="grid items-start gap-5 xl:grid-cols-[minmax(0,1fr)_18rem]">
-          <Card className="p-5 lg:p-6">
-            <form className="space-y-5" onSubmit={submit}>
+          <Card className="min-h-[640px] p-4 lg:p-5">
+            <form className="space-y-3" onSubmit={submit}>
               <div>
                 <p className="text-sm font-bold uppercase tracking-[0.2em] text-cyan">Authentication</p>
                 <h2 className="mt-2 text-3xl font-black">Login</h2>
                 <p className="mt-2 text-sm text-slate-400">Select the exact role you need for this session.</p>
               </div>
 
-              <div className="grid auto-rows-fr gap-3">
+              <div className="grid auto-rows-fr gap-2">
                 {examples.map(({ key, label, icon: Icon, description, capabilities }) => (
                   <button
                     key={key}
                     type="button"
-                    className={`min-h-[112px] rounded-lg border p-3 text-left transition sm:p-4 ${
+                    className={`min-h-[96px] rounded-lg border p-3 text-left transition ${
                       role === key
                         ? "border-cyan bg-cyan/15 text-cyan"
                         : "border-white/10 bg-navy/50 text-slate-300 hover:border-white/25"
@@ -151,10 +150,10 @@ export default function LoginPage() {
                       </span>
                       <span className="min-w-0 flex-1">
                         <span className="block text-base font-black">{label}</span>
-                        <span className="mt-1 block text-xs leading-relaxed text-slate-400 sm:text-sm">{description}</span>
-                        <span className="mt-3 flex flex-wrap gap-2">
+                        <span className="mt-1 block text-xs leading-relaxed text-slate-400">{description}</span>
+                        <span className="mt-1 flex flex-wrap gap-2">
                           {capabilities.map((item) => (
-                            <span key={item} className="rounded-md border border-white/10 px-2 py-1 text-[11px] font-bold text-slate-300 sm:text-xs">
+                            <span key={item} className="rounded-md border border-white/10 px-2 py-1 text-[11px] font-bold text-slate-300">
                               {item}
                             </span>
                           ))}
@@ -165,36 +164,35 @@ export default function LoginPage() {
                 ))}
               </div>
 
+              <div className="min-h-[150px]">
               {role === "citizen" ? (
-                <div className="space-y-4">
+                <div className="space-y-3">
                   <Field label="Citizen ID">
-                    <input
-                      className={inputClass}
-                      value={id}
-                      placeholder="CTZ-AB12CD"
-                      autoComplete="off"
-                      onChange={(event) => {
-                        setId(event.target.value.toUpperCase());
-                        setError("");
-                      }}
-                    />
+                    <div className="flex gap-2">
+                      <input
+                        className={inputClass}
+                        value={id}
+                        placeholder="CTZ-AB12CD"
+                        autoComplete="off"
+                        onChange={(event) => {
+                          setId(event.target.value.toUpperCase());
+                          setError("");
+                        }}
+                      />
+                      <button
+                        type="button"
+                        title="Generate Citizen ID"
+                        onClick={handleGenerateCitizenId}
+                        className="inline-flex shrink-0 items-center justify-center gap-2 rounded-lg border border-white/10 bg-navy/50 px-3 text-sm font-bold text-slate-200 transition hover:border-cyan/40 hover:text-cyan"
+                      >
+                        <RefreshCw className="h-4 w-4" />
+                        Generate
+                      </button>
+                    </div>
                   </Field>
-
-                  <button
-                    type="button"
-                    onClick={handleGenerateCitizenId}
-                    className="inline-flex w-full items-center justify-center gap-2 rounded-lg border border-white/10 bg-navy/50 px-4 py-3 text-sm font-bold text-slate-200 transition hover:border-cyan/40 hover:text-cyan"
-                  >
-                    <RefreshCw className="h-4 w-4" />
-                    Generate a new Citizen ID
-                  </button>
-
-                  <div className="rounded-lg border border-white/10 bg-navy/50 p-4 text-sm text-slate-300">
+                  <div className="rounded-lg border border-white/10 bg-navy/50 p-3 text-sm text-slate-300">
                     <p className="font-bold text-white">No wallet needed</p>
-                    <p className="mt-1">
-                      New here? Click "Generate a new Citizen ID" — save it somewhere safe. Use the same
-                      ID next time to see your past complaints and file new ones.
-                    </p>
+                    <p className="mt-1">Generate an ID once and reuse it to view your complaints.</p>
                   </div>
                 </div>
               ) : (
@@ -213,6 +211,7 @@ export default function LoginPage() {
                   )}
                 </div>
               )}
+              </div>
 
 
               {error && <p className="rounded-lg border border-danger/30 bg-danger/10 px-4 py-3 text-sm font-bold text-danger">{error}</p>}
@@ -224,7 +223,7 @@ export default function LoginPage() {
             </form>
           </Card>
 
-          <aside className="space-y-6">
+          <aside className="space-y-5 lg:col-start-2 xl:col-start-auto">
             <Card className="p-5">
               <h2 className="text-lg font-black">Session Controls</h2>
               <div className="mt-4 space-y-3 text-sm text-slate-300">
@@ -254,7 +253,6 @@ export default function LoginPage() {
               </div>
             </Card>
           </aside>
-        </div>
       </div>
     </main>
   );
