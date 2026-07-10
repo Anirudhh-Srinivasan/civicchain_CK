@@ -39,7 +39,8 @@ function RequireRole({ role, children }) {
   if (!session) return <Navigate to="/login" replace />;
   if (session.role !== role) return <Navigate to={pathForRole(session.role)} replace />;
 
-  if (!demoSeed) {
+  // Citizens authenticate with a generated Citizen ID, not a wallet.
+  if (!demoSeed && role !== "citizen") {
     if (!connected || !publicKey) {
       return (
         <div className="flex min-h-[60vh] flex-col items-center justify-center p-6 text-center">

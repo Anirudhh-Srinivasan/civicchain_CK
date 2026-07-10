@@ -35,6 +35,30 @@ export const roles = {
   },
 };
 
+const citizenIdKey = "civicchain:citizen-id";
+const citizenIdPattern = /^CTZ-[A-Z0-9]{6}$/;
+
+export function generateCitizenId() {
+  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  let code = "";
+  for (let i = 0; i < 6; i += 1) {
+    code += chars[Math.floor(Math.random() * chars.length)];
+  }
+  return `CTZ-${code}`;
+}
+
+export function getSavedCitizenId() {
+  try {
+    return window.localStorage.getItem(citizenIdKey);
+  } catch {
+    return null;
+  }
+}
+
+export function saveCitizenId(id) {
+  window.localStorage.setItem(citizenIdKey, id);
+}
+
 function isExpired(session) {
   return !session.expiresAt || new Date(session.expiresAt).getTime() <= Date.now();
 }
@@ -59,6 +83,16 @@ export function validateLogin(role, id) {
   const selected = roles[role];
   const normalized = id.trim();
   if (!selected) return "Choose a valid role.";
+
+  // Citizens never need a wallet — a generated Citizen ID is always valid.
+  if (role === "citizen") {
+    if (!normalized) return "Enter your Citizen ID, or generate a new one below.";
+    if (citizenIdPattern.test(normalized)) return "";
+    const demoSeed = import.meta.env.VITE_ENABLE_DEMO_SEED === "true";
+    if (demoSeed && selected.pattern.test(normalized)) return "";
+    return "Enter a valid Citizen ID (e.g. CTZ-AB12CD), or generate a new one below.";
+  }
+
   if (!normalized) return `Enter a ${selected.idLabel.toLowerCase()} to continue.`;
 
   // Always allow valid Solana public keys (base58, length 32-44)

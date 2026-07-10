@@ -11,9 +11,18 @@ import {
   Landmark,
   LockKeyhole,
   LogIn,
+  RefreshCw,
   ShieldCheck,
 } from "lucide-react";
-import { getLoginAudit, roles, saveSession, validateLogin } from "../services/auth";
+import {
+  generateCitizenId,
+  getLoginAudit,
+  getSavedCitizenId,
+  roles,
+  saveCitizenId,
+  saveSession,
+  validateLogin,
+} from "../services/auth";
 import { Card, Field, inputClass } from "../components/ui";
 
 
@@ -27,7 +36,7 @@ export default function LoginPage() {
   const navigate = useNavigate();
   const { publicKey, connected } = useWallet();
   const [role, setRole] = useState("citizen");
-  const [id, setId] = useState("");
+  const [id, setId] = useState(() => getSavedCitizenId() || "");
   const [error, setError] = useState("");
   const selected = roles[role];
   const audit = getLoginAudit();
@@ -35,13 +44,21 @@ export default function LoginPage() {
   const demoModeEnabled = import.meta.env.VITE_ENABLE_DEMO_SEED === "true";
 
   useEffect(() => {
+    if (role === "citizen") return; // citizens use a generated ID, not a wallet
     if (!demoModeEnabled && connected && publicKey) {
       setId(publicKey.toBase58());
       setError("");
     } else if (!demoModeEnabled && !connected) {
       setId("");
     }
-  }, [connected, publicKey, demoModeEnabled]);
+  }, [connected, publicKey, demoModeEnabled, role]);
+
+  const handleGenerateCitizenId = () => {
+    const newId = generateCitizenId();
+    saveCitizenId(newId);
+    setId(newId);
+    setError("");
+  };
 
   const examples = useMemo(
     () => Object.entries(roles).map(([key, item]) => ({ key, ...item, icon: roleIcons[key] })),
@@ -50,7 +67,9 @@ export default function LoginPage() {
 
   const submit = (event) => {
     event.preventDefault();
-    const loginId = demoModeEnabled ? id : (publicKey ? publicKey.toBase58() : "");
+    const loginId = role === "citizen" || demoModeEnabled
+      ? id
+      : (publicKey ? publicKey.toBase58() : "");
     const validation = validateLogin(role, loginId);
     if (validation) {
       setError(validation);
@@ -143,7 +162,39 @@ export default function LoginPage() {
                 ))}
               </div>
 
-              {demoModeEnabled ? (
+              {role === "citizen" ? (
+                <div className="space-y-4">
+                  <Field label="Citizen ID">
+                    <input
+                      className={inputClass}
+                      value={id}
+                      placeholder="CTZ-AB12CD"
+                      autoComplete="off"
+                      onChange={(event) => {
+                        setId(event.target.value.toUpperCase());
+                        setError("");
+                      }}
+                    />
+                  </Field>
+
+                  <button
+                    type="button"
+                    onClick={handleGenerateCitizenId}
+                    className="inline-flex w-full items-center justify-center gap-2 rounded-lg border border-white/10 bg-navy/50 px-4 py-3 text-sm font-bold text-slate-200 transition hover:border-cyan/40 hover:text-cyan"
+                  >
+                    <RefreshCw className="h-4 w-4" />
+                    Generate a new Citizen ID
+                  </button>
+
+                  <div className="rounded-lg border border-white/10 bg-navy/50 p-4 text-sm text-slate-300">
+                    <p className="font-bold text-white">No wallet needed</p>
+                    <p className="mt-1">
+                      New here? Click "Generate a new Citizen ID" — save it somewhere safe. Use the same
+                      ID next time to see your past complaints and file new ones.
+                    </p>
+                  </div>
+                </div>
+              ) : demoModeEnabled ? (
                 <>
                   <Field label={selected.idLabel}>
                     <input
@@ -196,7 +247,10 @@ export default function LoginPage() {
               <div className="mt-4 space-y-3 text-sm text-slate-300">
                 <PolicyRow label="Role isolation" value="Enabled" />
                 <PolicyRow label="Expiry window" value="8 hours" />
-                <PolicyRow label="Wallet optional" value={demoModeEnabled ? "Fallback ID active" : "Required"} />
+                <PolicyRow
+                  label="Wallet optional"
+                  value={role === "citizen" ? "Not required" : demoModeEnabled ? "Fallback ID active" : "Required"}
+                />
                 <PolicyRow label="Backend guard" value={demoModeEnabled ? "Demo mode" : "Production"} />
               </div>
             </Card>
