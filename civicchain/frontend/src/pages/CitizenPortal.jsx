@@ -40,7 +40,7 @@ function CitizenHome() {
   const { publicKey } = useWallet();
   const session = getSession();
   const [form, setForm] = useState({ title: "", description: "", location: "", category: "pothole" });
-  const [bidHours, setBidHours] = useState("24");
+  const [bidMinutes, setBidMinutes] = useState("30");
   const [photoFile, setPhotoFile] = useState(null);
   const [state, setState] = useState({ loading: false, error: "", saved: null });
 
@@ -49,8 +49,8 @@ function CitizenHome() {
     setState({ loading: true, error: "", saved: null });
     try {
       const coordinates = await geocodeAddress(form.location);
-      const durationHours = Math.max(1, Number(bidHours) || 24);
-      const bidDeadline = new Date(Date.now() + durationHours * 60 * 60 * 1000).toISOString();
+      const durationMinutes = Math.max(1, Number(bidMinutes) || 30);
+      const bidDeadline = new Date(Date.now() + durationMinutes * 60 * 1000).toISOString();
       const saved = await createComplaint({
         ...form,
         ...(coordinates
@@ -61,7 +61,7 @@ function CitizenHome() {
         photo: photoFile,
       });
       setForm({ title: "", description: "", location: "", category: "pothole" });
-      setBidHours("24");
+      setBidMinutes("30");
       setPhotoFile(null);
       setState({ loading: false, error: "", saved });
     } catch (error) {
@@ -115,15 +115,15 @@ function CitizenHome() {
             <input
               className={`${inputClass} pl-10`}
               min="1"
-              max="720"
+              max="43200"
               step="1"
               type="number"
-              value={bidHours}
-              onChange={(e) => setBidHours(e.target.value)}
-              placeholder="Enter hours"
+              value={bidMinutes}
+              onChange={(e) => setBidMinutes(e.target.value)}
+              placeholder="Enter minutes"
             />
           </div>
-          <p className="mt-2 text-xs text-slate-500">Enter any custom duration in hours.</p>
+          <p className="mt-2 text-xs text-slate-500">Enter any custom duration in minutes. Minimum is 1 minute.</p>
         </Field>
         <Field label="Photo Upload">
           <label className="flex cursor-pointer items-center justify-between rounded-lg border border-dashed border-white/20 bg-navy/70 px-4 py-4 text-sm text-slate-300">

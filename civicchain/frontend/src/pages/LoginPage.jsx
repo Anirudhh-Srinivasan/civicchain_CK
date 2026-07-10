@@ -83,9 +83,9 @@ export default function LoginPage() {
 
 
   return (
-    <main className="min-h-screen bg-[linear-gradient(145deg,#07111f_0%,#0b1426_48%,#111827_100%)] px-4 py-6">
-      <div className="mx-auto grid min-h-[calc(100vh-3rem)] max-w-7xl gap-6 lg:grid-cols-[0.88fr_1.12fr]">
-        <section className="flex flex-col justify-between gap-8 rounded-lg border border-white/10 bg-white/[0.035] p-6 lg:p-8">
+    <main className="min-h-screen bg-[linear-gradient(145deg,#07111f_0%,#0b1426_48%,#111827_100%)] px-4 py-5 lg:py-6">
+      <div className="mx-auto grid min-h-[calc(100vh-2.5rem)] max-w-6xl items-center gap-5 lg:grid-cols-[0.82fr_1.18fr]">
+        <section className="flex flex-col justify-between gap-7 rounded-lg border border-white/10 bg-white/[0.035] p-6 lg:min-h-[620px] lg:p-7">
           <div className="flex items-center gap-3">
             <div className="grid h-11 w-11 place-items-center rounded-lg bg-cyan text-navy">
               <ShieldCheck className="h-6 w-6" />
@@ -101,7 +101,7 @@ export default function LoginPage() {
               <Activity className="h-4 w-4" />
               Devnet services online
             </div>
-            <h1 className="mt-5 max-w-3xl text-4xl font-black leading-tight text-white md:text-6xl">
+            <h1 className="mt-5 max-w-3xl text-4xl font-black leading-tight text-white md:text-5xl">
               Civic operations console
             </h1>
             <p className="mt-5 text-lg text-slate-300">
@@ -116,21 +116,21 @@ export default function LoginPage() {
           </div>
         </section>
 
-        <div className="grid gap-6 xl:grid-cols-[1fr_0.72fr]">
-          <Card className="p-6 lg:p-7">
-            <form className="space-y-6" onSubmit={submit}>
+        <div className="grid items-start gap-5 xl:grid-cols-[minmax(0,1fr)_18rem]">
+          <Card className="p-5 lg:p-6">
+            <form className="space-y-5" onSubmit={submit}>
               <div>
                 <p className="text-sm font-bold uppercase tracking-[0.2em] text-cyan">Authentication</p>
                 <h2 className="mt-2 text-3xl font-black">Login</h2>
                 <p className="mt-2 text-sm text-slate-400">Select the exact role you need for this session.</p>
               </div>
 
-              <div className="grid gap-3">
+              <div className="grid auto-rows-fr gap-3">
                 {examples.map(({ key, label, icon: Icon, description, capabilities }) => (
                   <button
                     key={key}
                     type="button"
-                    className={`rounded-lg border p-4 text-left transition ${
+                    className={`min-h-[112px] rounded-lg border p-3 text-left transition sm:p-4 ${
                       role === key
                         ? "border-cyan bg-cyan/15 text-cyan"
                         : "border-white/10 bg-navy/50 text-slate-300 hover:border-white/25"
@@ -146,15 +146,15 @@ export default function LoginPage() {
                     }}
                   >
                     <span className="flex items-start gap-3">
-                      <span className="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-white/10">
+                      <span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-white/10">
                         <Icon className="h-5 w-5" />
                       </span>
                       <span className="min-w-0 flex-1">
                         <span className="block text-base font-black">{label}</span>
-                        <span className="mt-1 block text-sm text-slate-400">{description}</span>
+                        <span className="mt-1 block text-xs leading-relaxed text-slate-400 sm:text-sm">{description}</span>
                         <span className="mt-3 flex flex-wrap gap-2">
                           {capabilities.map((item) => (
-                            <span key={item} className="rounded-md border border-white/10 px-2 py-1 text-xs font-bold text-slate-300">
+                            <span key={item} className="rounded-md border border-white/10 px-2 py-1 text-[11px] font-bold text-slate-300 sm:text-xs">
                               {item}
                             </span>
                           ))}
