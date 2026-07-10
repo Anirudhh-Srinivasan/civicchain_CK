@@ -22,6 +22,9 @@ export default function CitizenPortal() {
   return (
     <div className="page-enter">
       <SessionBanner role="citizen" />
+      <div className="mb-6 flex justify-end">
+        <WalletMultiButton />
+      </div>
       <PortalNav links={links} />
       <Routes>
         <Route index element={<CitizenHome />} />
@@ -62,66 +65,61 @@ function CitizenHome() {
   };
 
   return (
-    <div className="mx-auto max-w-3xl">
-      <Card className="p-6">
-        <form className="space-y-4" onSubmit={submit}>
-          <div className="flex flex-wrap items-start justify-between gap-4">
-            <div>
-              <p className="text-sm font-bold uppercase tracking-[0.2em] text-cyan">Citizen Portal</p>
-              <div className="mt-2 flex items-center gap-3">
-                <Send className="h-5 w-5 text-cyan" />
-                <h1 className="text-2xl font-black">Submit Complaint</h1>
-              </div>
-              <p className="mt-2 text-sm text-slate-400">
-                Report a civic issue and track it from My Complaints.
-              </p>
-            </div>
-            <WalletMultiButton />
+    <Card className="mx-auto max-w-3xl p-6">
+      <form className="space-y-4" onSubmit={submit}>
+        <div>
+          <p className="text-sm font-bold uppercase tracking-[0.2em] text-cyan">Citizen Portal</p>
+          <div className="mt-2 flex items-center gap-3">
+            <Send className="h-5 w-5 text-cyan" />
+            <h1 className="text-2xl font-black">Submit Complaint</h1>
           </div>
-          <Field label="Title">
-            <input className={inputClass} required value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} />
-          </Field>
-          <Field label="Description">
-            <textarea className={inputClass} required rows="4" value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} />
-          </Field>
-          <Field label="Address / Landmark">
-            <div className="relative">
-              <MapPin className="pointer-events-none absolute left-3 top-3.5 h-4 w-4 text-cyan" />
-              <input
-                className={`${inputClass} pl-10`}
-                required
-                placeholder="Example: 12 Main Road, near Anna Nagar Tower, Chennai"
-                value={form.location}
-                onChange={(e) => setForm({ ...form, location: e.target.value })}
-              />
-            </div>
-          </Field>
-          <Field label="Category">
-            <select className={inputClass} value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })}>
-              <option value="pothole">Pothole</option>
-              <option value="flooding">Flooding</option>
-              <option value="garbage">Garbage</option>
-              <option value="streetlight">Streetlight</option>
-              <option value="water leak">Water leak</option>
-            </select>
-          </Field>
-          <Field label="Photo Upload">
-            <label className="flex cursor-pointer items-center justify-between rounded-lg border border-dashed border-white/20 bg-navy/70 px-4 py-4 text-sm text-slate-300">
-              <span className="inline-flex items-center gap-2">
-                <Camera className="h-4 w-4 text-cyan" />
-                {photoFile?.name || "Choose issue photo"}
-              </span>
-              <input className="hidden" type="file" accept="image/*" onChange={(e) => setPhotoFile(e.target.files?.[0] || null)} />
-            </label>
-          </Field>
-          {state.error && <p className="text-sm text-danger">{state.error}</p>}
-          {state.saved && <p className="text-sm text-success">Complaint #{state.saved.id} submitted.</p>}
-          <button className="w-full rounded-lg bg-cyan px-5 py-3 font-black text-navy disabled:opacity-60" disabled={state.loading}>
-            {state.loading ? "Submitting..." : "Submit Complaint"}
-          </button>
-        </form>
-      </Card>
-    </div>
+          <p className="mt-2 text-sm text-slate-400">
+            Report a civic issue and track it from My Complaints.
+          </p>
+        </div>
+        <Field label="Title">
+          <input className={inputClass} required value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} />
+        </Field>
+        <Field label="Description">
+          <textarea className={inputClass} required rows="4" value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} />
+        </Field>
+        <Field label="Address / Landmark">
+          <div className="relative">
+            <MapPin className="pointer-events-none absolute left-3 top-3.5 h-4 w-4 text-cyan" />
+            <input
+              className={`${inputClass} pl-10`}
+              required
+              placeholder="Example: 12 Main Road, near Anna Nagar Tower, Chennai"
+              value={form.location}
+              onChange={(e) => setForm({ ...form, location: e.target.value })}
+            />
+          </div>
+        </Field>
+        <Field label="Category">
+          <select className={inputClass} value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })}>
+            <option value="pothole">Pothole</option>
+            <option value="flooding">Flooding</option>
+            <option value="garbage">Garbage</option>
+            <option value="streetlight">Streetlight</option>
+            <option value="water leak">Water leak</option>
+          </select>
+        </Field>
+        <Field label="Photo Upload">
+          <label className="flex cursor-pointer items-center justify-between rounded-lg border border-dashed border-white/20 bg-navy/70 px-4 py-4 text-sm text-slate-300">
+            <span className="inline-flex items-center gap-2">
+              <Camera className="h-4 w-4 text-cyan" />
+              {photoFile?.name || "Choose issue photo"}
+            </span>
+            <input className="hidden" type="file" accept="image/*" onChange={(e) => setPhotoFile(e.target.files?.[0] || null)} />
+          </label>
+        </Field>
+        {state.error && <p className="text-sm text-danger">{state.error}</p>}
+        {state.saved && <p className="text-sm text-success">Complaint #{state.saved.id} submitted.</p>}
+        <button className="w-full rounded-lg bg-cyan px-5 py-3 font-black text-navy disabled:opacity-60" disabled={state.loading}>
+          {state.loading ? "Submitting..." : "Submit Complaint"}
+        </button>
+      </form>
+    </Card>
   );
 }
 
