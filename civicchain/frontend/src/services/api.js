@@ -15,31 +15,6 @@ const categoryCycle = ["pothole", "flooding", "garbage", "streetlight", "water l
 const localKey = "civicchain:complaints";
 const apiOrigin = api.defaults.baseURL.replace(/\/$/, "");
 
-const demoComplaints = [
-  ["Open", "pothole", "Deep pothole near Anna Nagar roundabout", "A large pothole is slowing traffic and causing two-wheelers to swerve during peak hours.", "Anna Nagar, Chennai", 0.42],
-  ["Assigned", "flooding", "Storm water stagnation on T Nagar service lane", "Rainwater is blocking shop entrances near the bus stop.", "T Nagar, Chennai", 0.58],
-  ["Completed", "garbage", "Overflowing garbage bins beside Velachery MRTS", "Waste is spilling onto the pavement near the station entrance.", "Velachery, Chennai", 0.31],
-  ["Verified", "streetlight", "Streetlights restored on Adyar 2nd Avenue", "Three lights were repaired along a dark residential stretch.", "Adyar, Chennai", 0.27],
-  ["Open", "water leak", "Water leak near Tambaram market road", "A damaged pipeline is leaking continuously and creating slippery conditions.", "Tambaram, Chennai", 0.49],
-].map(([status, category, title, description, location, estimated_fund], index) => ({
-  id: index + 1,
-  complaint_pubkey: `local:${index + 1}`,
-  citizen_pubkey: `CitizenDemoWallet${index + 1}`,
-  title,
-  description,
-  location,
-  category,
-  status,
-  estimated_fund,
-  photo_url: imageForCategory(category),
-  bid_amount: status === "Open" ? null : Number((estimated_fund * 0.86).toFixed(2)),
-  contractor_pubkey: status === "Open" ? null : `ContractorDemoWallet${index + 1}`,
-  ai_confidence: status === "Verified" ? 0.92 : null,
-  ai_reasoning: status === "Verified" ? "Before and after imagery confirms the work was completed." : null,
-  payment_released: status === "Verified",
-  created_at: new Date().toISOString(),
-}));
-
 function isNetworkError(error) {
   return Boolean(error?.isAxiosError && !error.response);
 }
@@ -55,11 +30,10 @@ function readLocalComplaints() {
   try {
     const stored = window.localStorage.getItem(localKey);
     if (stored) return JSON.parse(stored).map(normalizeComplaint);
-    window.localStorage.setItem(localKey, JSON.stringify(demoComplaints));
   } catch {
-    return demoComplaints.map(normalizeComplaint);
+    return [];
   }
-  return demoComplaints.map(normalizeComplaint);
+  return [];
 }
 
 function writeLocalComplaints(items) {
