@@ -12,7 +12,7 @@ import CitizenPortal from "./pages/CitizenPortal.jsx";
 import ContractorPortal from "./pages/ContractorPortal.jsx";
 import GovernmentPortal from "./pages/GovernmentPortal.jsx";
 import LoginPage from "./pages/LoginPage.jsx";
-import { getSession, pathForRole, clearSession, roles } from "./services/auth.js";
+import { getSession, pathForRole, clearSession, roles, isDemoMode } from "./services/auth.js";
 
 function Providers({ children }) {
   const wallets = useMemo(() => [new PhantomWalletAdapter()], []);
@@ -34,7 +34,7 @@ function HomeRedirect() {
 function RequireRole({ role, children }) {
   const session = getSession();
   const { publicKey, connected } = useWallet();
-  const demoSeed = import.meta.env.VITE_ENABLE_DEMO_SEED === "true";
+  const demoSeed = isDemoMode();
 
   if (!session) return <Navigate to="/login" replace />;
   if (session.role !== role) return <Navigate to={pathForRole(session.role)} replace />;

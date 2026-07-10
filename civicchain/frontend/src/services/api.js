@@ -1,4 +1,5 @@
 import axios from "axios";
+import { isDemoMode } from "./auth";
 
 const defaultApiUrl = import.meta.env.DEV
   ? "http://localhost:8000"
@@ -48,7 +49,7 @@ function apiMessage(error) {
 }
 
 function readLocalComplaints() {
-  const demoSeed = import.meta.env.VITE_ENABLE_DEMO_SEED === "true";
+  const demoSeed = isDemoMode();
   if (!demoSeed) return [];
 
   try {
@@ -81,7 +82,7 @@ function updateLocalComplaint(id, updater) {
 export function normalizeComplaint(item, index = 0) {
   const status = item.status || statusCycle[index % statusCycle.length];
   const category = item.category || categoryCycle[index % categoryCycle.length];
-  const demoSeed = import.meta.env.VITE_ENABLE_DEMO_SEED === "true";
+  const demoSeed = isDemoMode();
 
   return {
     ...item,
