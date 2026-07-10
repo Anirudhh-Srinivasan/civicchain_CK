@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 import uuid
 from datetime import datetime, timezone
@@ -9,6 +10,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 DB_PATH = ROOT / "backend" / "complaints.db"
+
 
 
 COMPLAINTS = [
@@ -90,9 +92,13 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
 
 
 def main() -> None:
+    if os.getenv("ENABLE_DEMO_SEED", "false").lower() != "true":
+        print("Demo seeding is disabled by default. Set ENABLE_DEMO_SEED=true to seed demo data.")
+        return
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     with sqlite3.connect(DB_PATH) as conn:
         ensure_schema(conn)
+
         conn.execute("DELETE FROM complaints WHERE complaint_pubkey LIKE 'demo:%'")
         for index, (status, category, title, description, location, fund) in enumerate(COMPLAINTS, start=1):
             verified = status == "Verified"

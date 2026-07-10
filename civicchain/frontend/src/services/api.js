@@ -44,6 +44,9 @@ function apiMessage(error) {
 }
 
 function readLocalComplaints() {
+  const demoSeed = import.meta.env.VITE_ENABLE_DEMO_SEED === "true";
+  if (!demoSeed) return [];
+
   try {
     const stored = window.localStorage.getItem(localKey);
     if (stored) return JSON.parse(stored).map(normalizeComplaint);
@@ -74,11 +77,16 @@ function updateLocalComplaint(id, updater) {
 export function normalizeComplaint(item, index = 0) {
   const status = item.status || statusCycle[index % statusCycle.length];
   const category = item.category || categoryCycle[index % categoryCycle.length];
+  const demoSeed = import.meta.env.VITE_ENABLE_DEMO_SEED === "true";
+
   return {
     ...item,
     status,
     category,
-    estimated_fund: Number(item.estimated_fund || 0) || 0.35 + (index % 5) * 0.12,
+    estimated_fund:
+      item.estimated_fund !== undefined && item.estimated_fund !== null
+        ? Number(item.estimated_fund)
+        : (demoSeed ? 0.35 + (index % 5) * 0.12 : 0.0),
     latitude:
       item.latitude === null || item.latitude === undefined || item.latitude === ""
         ? null
@@ -90,27 +98,29 @@ export function normalizeComplaint(item, index = 0) {
     photo_url: resolvePhotoUrl(item.photo_url || imageForCategory(category)),
     ai_confidence:
       item.ai_confidence === null || item.ai_confidence === undefined
-        ? status === "Verified"
+        ? status === "Verified" && demoSeed
           ? 0.91
           : null
         : Number(item.ai_confidence),
     ai_reasoning:
       item.ai_reasoning ||
-      (status === "Verified"
+      (status === "Verified" && demoSeed
         ? "Visual evidence indicates the reported civic issue has been resolved."
         : null),
-    ai_source: item.ai_source || (status === "Verified" ? "groq" : null),
+    ai_source: item.ai_source || (status === "Verified" && demoSeed ? "groq" : null),
     verification_status:
-      item.verification_status || (status === "Verified" ? "approved" : status === "Completed" ? "queued" : null),
+      item.verification_status || (status === "Verified" && demoSeed ? "approved" : status === "Completed" && demoSeed ? "queued" : null),
     verification_checked_at: item.verification_checked_at || null,
     proof_hash: item.proof_hash || null,
     bid_amount:
       item.bid_amount === null || item.bid_amount === undefined
-        ? status === "Open"
+        ? status === "Open" || !demoSeed
           ? null
           : 0.28 + (index % 4) * 0.1
         : Number(item.bid_amount),
-    contractor_pubkey: item.contractor_pubkey || (status === "Open" ? null : "DemoContractorWallet9x8"),
+    contractor_pubkey:
+      item.contractor_pubkey ||
+      (status === "Open" || !demoSeed ? null : "DemoContractorWallet9x8"),
   };
 }
 
