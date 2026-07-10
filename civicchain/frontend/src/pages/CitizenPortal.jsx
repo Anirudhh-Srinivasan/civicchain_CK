@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, Route, Routes, useParams } from "react-router-dom";
 import { WalletMultiButton } from "@solana/wallet-adapter-react-ui";
 import { useWallet } from "@solana/wallet-adapter-react";
-import { Camera, FileText, Home, Map, MapPin, Send } from "lucide-react";
+import { Camera, Clock3, FileText, Home, Map, MapPin, Send } from "lucide-react";
 import ComplaintCard from "../components/ComplaintCard";
 import ComplaintMap from "../components/ComplaintMap";
 import PortalNav from "../components/PortalNav";
@@ -40,6 +40,7 @@ function CitizenHome() {
   const { publicKey } = useWallet();
   const session = getSession();
   const [form, setForm] = useState({ title: "", description: "", location: "", category: "pothole" });
+  const [bidHours, setBidHours] = useState("24");
   const [photoFile, setPhotoFile] = useState(null);
   const [state, setState] = useState({ loading: false, error: "", saved: null });
 
@@ -48,15 +49,18 @@ function CitizenHome() {
     setState({ loading: true, error: "", saved: null });
     try {
       const coordinates = await geocodeAddress(form.location);
+      const bidDeadline = new Date(Date.now() + Number(bidHours) * 60 * 60 * 1000).toISOString();
       const saved = await createComplaint({
         ...form,
         ...(coordinates
           ? { latitude: coordinates.latitude, longitude: coordinates.longitude }
           : {}),
         citizen_pubkey: publicKey?.toBase58() || session?.id || null,
+        bid_deadline: bidDeadline,
         photo: photoFile,
       });
       setForm({ title: "", description: "", location: "", category: "pothole" });
+      setBidHours("24");
       setPhotoFile(null);
       setState({ loading: false, error: "", saved });
     } catch (error) {
@@ -103,6 +107,18 @@ function CitizenHome() {
             <option value="streetlight">Streetlight</option>
             <option value="water leak">Water leak</option>
           </select>
+        </Field>
+        <Field label="Contractor bidding window">
+          <div className="relative">
+            <Clock3 className="pointer-events-none absolute left-3 top-3.5 h-4 w-4 text-cyan" />
+            <select className={`${inputClass} pl-10`} value={bidHours} onChange={(e) => setBidHours(e.target.value)}>
+              <option value="6">6 hours</option>
+              <option value="12">12 hours</option>
+              <option value="24">24 hours</option>
+              <option value="48">48 hours</option>
+              <option value="72">72 hours</option>
+            </select>
+          </div>
         </Field>
         <Field label="Photo Upload">
           <label className="flex cursor-pointer items-center justify-between rounded-lg border border-dashed border-white/20 bg-navy/70 px-4 py-4 text-sm text-slate-300">
@@ -173,9 +189,15 @@ export function DetailView({ complaint, back }) {
       </Card>
       <div className="space-y-5">
         <Card className="p-6">
-          <h2 className="text-xl font-black">Current Bid</h2>
-          <p className="mt-3 text-3xl font-black text-success">{complaint.bid_amount ? `${complaint.bid_amount.toFixed(2)} SOL` : "No bid yet"}</p>
-          <p className="mt-2 text-sm text-slate-400">{complaint.contractor_pubkey || "Waiting for contractor assignment"}</p>
+          <h2 className="text-xl font-black">Contractor Bids</h2>
+          <p className="mt-3 text-3xl font-black text-success">{complaint.lowest_bid ? `${complaint.lowest_bid.amount.toFixed(2)} SOL` : "No bid yet"}</p>
+          <p className="mt-2 text-sm text-slate-400">
+            {complaint.contractor_pubkey || `${complaint.bid_count || 0} bid${complaint.bid_count === 1 ? "" : "s"} received`}
+          </p>
+          <p className="mt-2 text-xs font-bold uppercase tracking-widest text-cyan">
+            Bid window {complaint.bidding_closed ? "closed" : "open"}{complaint.bid_deadline ? ` until ${formatDateTime(complaint.bid_deadline)}` : ""}
+          </p>
+          <BidList bids={complaint.bids || []} />
         </Card>
         <Card className="p-6">
           <h2 className="text-xl font-black">AI Verification</h2>
@@ -185,6 +207,33 @@ export function DetailView({ complaint, back }) {
       </div>
     </div>
   );
+}
+
+function BidList({ bids }) {
+  if (!bids.length) {
+    return <p className="mt-4 rounded-lg border border-white/10 bg-white/[0.03] p-3 text-sm text-slate-400">Waiting for contractors to place bids.</p>;
+  }
+  return (
+    <div className="mt-4 space-y-2">
+      {[...bids].sort((a, b) => a.amount - b.amount).map((bid, index) => (
+        <div key={`${bid.contractor_pubkey}-${bid.created_at || index}`} className="flex items-center justify-between gap-3 rounded-lg border border-white/10 bg-white/[0.03] p-3 text-sm">
+          <span className="truncate text-slate-300">{bid.contractor_pubkey}</span>
+          <span className="font-black text-success">{bid.amount.toFixed(2)} SOL</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function formatDateTime(value) {
+  try {
+    return new Intl.DateTimeFormat(undefined, {
+      dateStyle: "medium",
+      timeStyle: "short",
+    }).format(new Date(value));
+  } catch {
+    return value;
+  }
 }
 
 function verificationLabel(complaint) {

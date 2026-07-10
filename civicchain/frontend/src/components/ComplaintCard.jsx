@@ -1,5 +1,5 @@
 import { Link } from "react-router-dom";
-import { MapPin, Wallet } from "lucide-react";
+import { Clock3, MapPin, Wallet } from "lucide-react";
 import { Card, StatusBadge } from "./ui";
 
 export default function ComplaintCard({ complaint, detailBase = "/citizen/complaints", action }) {
@@ -22,7 +22,11 @@ export default function ComplaintCard({ complaint, detailBase = "/citizen/compla
           </span>
           <span className="inline-flex items-center gap-2">
             <Wallet className="h-4 w-4 text-success" />
-            {complaint.estimated_fund.toFixed(2)} SOL
+            {complaint.lowest_bid ? `${complaint.lowest_bid.amount.toFixed(2)} SOL lowest` : `${complaint.estimated_fund.toFixed(2)} SOL`}
+          </span>
+          <span className="inline-flex items-center gap-2">
+            <Clock3 className="h-4 w-4 text-cyan" />
+            {complaint.bid_count || 0} bid{complaint.bid_count === 1 ? "" : "s"}
           </span>
         </div>
         <div className="flex items-center gap-3">

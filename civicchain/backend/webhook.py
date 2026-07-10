@@ -9,6 +9,7 @@ import sqlite3
 import struct
 import sys
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -75,6 +76,7 @@ class ManualComplaintRequest(BaseModel):
     photo_url: str | None = None
     latitude: float | None = None
     longitude: float | None = None
+    bid_deadline: str | None = None
 
 
 class VerifyRequest(BaseModel):
@@ -95,6 +97,10 @@ class VerifyRequest(BaseModel):
 class BidRequest(BaseModel):
     amount: float
     contractor_pubkey: str | None = None
+
+
+class AcceptLowestBidRequest(BaseModel):
+    government_pubkey: str | None = None
 
 
 class ProofRequest(BaseModel):
@@ -155,6 +161,8 @@ def init_db() -> None:
                 latitude REAL,
                 longitude REAL,
                 estimated_fund REAL DEFAULT 0,
+                bid_deadline TEXT,
+                bids_json TEXT DEFAULT '[]',
                 bid_amount REAL,
                 contractor_pubkey TEXT,
                 ai_confidence REAL,
@@ -183,6 +191,8 @@ def init_db() -> None:
             "latitude": "ALTER TABLE complaints ADD COLUMN latitude REAL",
             "longitude": "ALTER TABLE complaints ADD COLUMN longitude REAL",
             "estimated_fund": "ALTER TABLE complaints ADD COLUMN estimated_fund REAL DEFAULT 0",
+            "bid_deadline": "ALTER TABLE complaints ADD COLUMN bid_deadline TEXT",
+            "bids_json": "ALTER TABLE complaints ADD COLUMN bids_json TEXT DEFAULT '[]'",
             "bid_amount": "ALTER TABLE complaints ADD COLUMN bid_amount REAL",
             "contractor_pubkey": "ALTER TABLE complaints ADD COLUMN contractor_pubkey TEXT",
             "ai_confidence": "ALTER TABLE complaints ADD COLUMN ai_confidence REAL",
@@ -220,8 +230,49 @@ def on_startup() -> None:
             print(f"Failed to auto-seed demo complaints: {e}")
 
 
+def parse_bids(value: str | None) -> list[dict[str, Any]]:
+    if not value:
+        return []
+    try:
+        parsed = json.loads(value)
+    except json.JSONDecodeError:
+        return []
+    if not isinstance(parsed, list):
+        return []
+    return [item for item in parsed if isinstance(item, dict)]
+
+
+def serialize_bids(bids: list[dict[str, Any]]) -> str:
+    return json.dumps(bids, separators=(",", ":"))
+
+
+def lowest_bid(bids: list[dict[str, Any]]) -> dict[str, Any] | None:
+    valid = [
+        bid
+        for bid in bids
+        if isinstance(bid.get("amount"), (int, float)) and bid.get("contractor_pubkey")
+    ]
+    if not valid:
+        return None
+    return min(valid, key=lambda bid: float(bid["amount"]))
+
+
+def is_bid_window_closed(value: str | None) -> bool:
+    if not value:
+        return False
+    try:
+        normalized = value.replace("Z", "+00:00")
+        deadline = datetime.fromisoformat(normalized)
+    except ValueError:
+        return False
+    if deadline.tzinfo is None:
+        deadline = deadline.replace(tzinfo=timezone.utc)
+    return datetime.now(timezone.utc) > deadline
+
 
 def row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
+    bids = parse_bids(row["bids_json"])
+    best_bid = lowest_bid(bids)
     return {
         "id": row["id"],
         "complaint_pubkey": row["complaint_pubkey"],
@@ -235,6 +286,11 @@ def row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
         "latitude": row["latitude"],
         "longitude": row["longitude"],
         "estimated_fund": row["estimated_fund"],
+        "bid_deadline": row["bid_deadline"],
+        "bids": bids,
+        "bid_count": len(bids),
+        "lowest_bid": best_bid,
+        "bidding_closed": is_bid_window_closed(row["bid_deadline"]),
         "bid_amount": row["bid_amount"],
         "contractor_pubkey": row["contractor_pubkey"],
         "ai_confidence": row["ai_confidence"],
@@ -862,6 +918,7 @@ def create_complaint_upload(
     citizen_pubkey: str | None = Form(None),
     latitude: float | None = Form(None),
     longitude: float | None = Form(None),
+    bid_deadline: str | None = Form(None),
     photo: UploadFile = File(...),
 ) -> dict[str, Any]:
     saved_path = save_uploaded_image("complaints", "issue", photo)
@@ -876,6 +933,7 @@ def create_complaint_upload(
                 photo_url=public_upload_url(saved_path),
                 latitude=latitude,
                 longitude=longitude,
+                bid_deadline=bid_deadline,
             )
         )
     except HTTPException:
@@ -905,11 +963,13 @@ def create_complaint(request: ManualComplaintRequest) -> dict[str, Any]:
                 latitude,
                 longitude,
                 estimated_fund,
+                bid_deadline,
+                bids_json,
                 signature,
                 slot,
                 raw_transaction
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 complaint_pubkey,
@@ -923,6 +983,8 @@ def create_complaint(request: ManualComplaintRequest) -> dict[str, Any]:
                 request.latitude,
                 request.longitude,
                 0,
+                optional_text(request.bid_deadline),
+                "[]",
                 None,
                 None,
                 json.dumps({"source": "manual"}),
@@ -977,11 +1039,13 @@ def place_bid(complaint_id: int, request: BidRequest) -> dict[str, Any]:
         ).fetchone()
         if row is None:
             raise HTTPException(status_code=404, detail="Complaint not found")
-        if row["status"] not in ("Open", "Assigned"):
+        if row["status"] != "Open":
             raise HTTPException(
                 status_code=400,
-                detail="Only open or assigned complaints can receive bids",
+                detail="Only open complaints can receive bids",
             )
+        if is_bid_window_closed(row["bid_deadline"]):
+            raise HTTPException(status_code=400, detail="The citizen bid window is closed")
 
         contractor_pubkey = request.contractor_pubkey
         if not contractor_pubkey:
@@ -992,19 +1056,76 @@ def place_bid(complaint_id: int, request: BidRequest) -> dict[str, Any]:
         elif not valid_solana_pubkey(contractor_pubkey):
             raise HTTPException(status_code=400, detail="Invalid contractor public key")
 
+        bids = [
+            bid
+            for bid in parse_bids(row["bids_json"])
+            if bid.get("contractor_pubkey") != contractor_pubkey
+        ]
+        bids.append(
+            {
+                "amount": round(float(request.amount), 4),
+                "contractor_pubkey": contractor_pubkey,
+                "created_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
+            }
+        )
+        best_bid = lowest_bid(bids)
+        conn.execute(
+            """
+            UPDATE complaints
+            SET bids_json = ?,
+                bid_amount = ?,
+                contractor_pubkey = NULL,
+                estimated_fund = CASE WHEN estimated_fund > 0 THEN estimated_fund ELSE ? END
+            WHERE id = ?
+            """,
+            (
+                serialize_bids(bids),
+                best_bid["amount"] if best_bid else None,
+                best_bid["amount"] if best_bid else request.amount,
+                complaint_id,
+            ),
+        )
+        updated = conn.execute(
+            "SELECT * FROM complaints WHERE id = ?",
+            (complaint_id,),
+        ).fetchone()
+
+    return row_to_dict(updated)
+
+
+@app.post("/complaints/{complaint_id}/accept-lowest-bid")
+def accept_lowest_bid(complaint_id: int, request: AcceptLowestBidRequest) -> dict[str, Any]:
+    init_db()
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT * FROM complaints WHERE id = ?",
+            (complaint_id,),
+        ).fetchone()
+        if row is None:
+            raise HTTPException(status_code=404, detail="Complaint not found")
+        if row["status"] not in ("Open", "Assigned"):
+            raise HTTPException(
+                status_code=400,
+                detail="Only open complaints with bids can be awarded",
+            )
+
+        bid = lowest_bid(parse_bids(row["bids_json"]))
+        if bid is None:
+            raise HTTPException(status_code=400, detail="No contractor bids are available")
+
         conn.execute(
             """
             UPDATE complaints
             SET status = 'Assigned',
                 bid_amount = ?,
                 contractor_pubkey = ?,
-                estimated_fund = CASE WHEN estimated_fund > 0 THEN estimated_fund ELSE ? END
+                estimated_fund = ?
             WHERE id = ?
             """,
             (
-                request.amount,
-                contractor_pubkey,
-                request.amount,
+                bid["amount"],
+                bid["contractor_pubkey"],
+                bid["amount"],
                 complaint_id,
             ),
         )

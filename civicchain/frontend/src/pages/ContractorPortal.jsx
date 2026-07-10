@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 import { Route, Routes, useParams } from "react-router-dom";
 import { WalletMultiButton } from "@solana/wallet-adapter-react-ui";
 import { useWallet } from "@solana/wallet-adapter-react";
-import { BriefcaseBusiness, CheckCircle2, LayoutDashboard, Upload } from "lucide-react";
+import { BriefcaseBusiness, CheckCircle2, Clock3, LayoutDashboard, Upload } from "lucide-react";
 import ComplaintCard from "../components/ComplaintCard";
 import PortalNav from "../components/PortalNav";
 import SessionBanner from "../components/SessionBanner";
@@ -53,8 +53,8 @@ function Dashboard() {
             complaint={item}
             detailBase="/contractor/complaints"
             action={
-              <button className="rounded-lg bg-cyan px-4 py-2 text-sm font-black text-navy" onClick={() => setSelected(item)}>
-                Place Bid
+              <button className="rounded-lg bg-cyan px-4 py-2 text-sm font-black text-navy disabled:opacity-50" disabled={item.bidding_closed} onClick={() => setSelected(item)}>
+                {item.bidding_closed ? "Closed" : "Place Bid"}
               </button>
             }
           />
@@ -86,7 +86,8 @@ function ContractorDetail() {
 function BidModal({ complaint, onClose, onSaved }) {
   const { publicKey } = useWallet();
   const session = getSession();
-  const [amount, setAmount] = useState(complaint.estimated_fund.toFixed(2));
+  const suggested = complaint.lowest_bid?.amount || complaint.estimated_fund || 0.25;
+  const [amount, setAmount] = useState(Math.max(0.01, suggested - 0.01).toFixed(2));
   const [state, setState] = useState({ loading: false, error: "" });
   const submit = async () => {
     setState({ loading: true, error: "" });
@@ -106,6 +107,20 @@ function BidModal({ complaint, onClose, onSaved }) {
       <Card className="w-full max-w-md p-6">
         <h2 className="text-xl font-black">Place Bid</h2>
         <p className="mt-2 text-sm text-slate-400">{complaint.title}</p>
+        <div className="mt-4 grid gap-3 rounded-lg border border-white/10 bg-navy/60 p-4 text-sm text-slate-300">
+          <span className="inline-flex items-center gap-2">
+            <BriefcaseBusiness className="h-4 w-4 text-cyan" />
+            {complaint.bid_count || 0} contractor bid{complaint.bid_count === 1 ? "" : "s"}
+          </span>
+          <span className="inline-flex items-center gap-2">
+            <CheckCircle2 className="h-4 w-4 text-success" />
+            Current lowest: {complaint.lowest_bid ? `${complaint.lowest_bid.amount.toFixed(2)} SOL` : "none"}
+          </span>
+          <span className="inline-flex items-center gap-2">
+            <Clock3 className="h-4 w-4 text-cyan" />
+            {complaint.bid_deadline ? `Deadline: ${formatDateTime(complaint.bid_deadline)}` : "No deadline set"}
+          </span>
+        </div>
         <Field label="Bid amount in SOL">
           <input className={inputClass} min="0.01" type="number" step="0.01" value={amount} onChange={(e) => setAmount(e.target.value)} />
         </Field>
@@ -125,7 +140,7 @@ function BidModal({ complaint, onClose, onSaved }) {
 
 function ActiveBids() {
   const { data, loading, error } = useComplaints();
-  const bids = data.filter((item) => ["Assigned", "Completed", "Verified"].includes(item.status));
+  const bids = data.filter((item) => (item.bids?.length || 0) > 0 || ["Assigned", "Completed", "Verified"].includes(item.status));
   if (loading) return <LoadingState />;
   if (error) return <ErrorState message={error} />;
   if (!bids.length) return <EmptyState title="No active bids" text="Bids placed from the dashboard are tracked here during the demo." />;
@@ -139,13 +154,29 @@ function ActiveBids() {
               <h2 className="text-xl font-black">{bid.title}</h2>
               <p className="mt-2 text-sm text-slate-400">{bid.location}</p>
             </div>
-            <p className="text-2xl font-black text-success">{bid.bid_amount.toFixed(2)} SOL</p>
+            <p className="text-2xl font-black text-success">{(bid.bid_amount || bid.lowest_bid?.amount || 0).toFixed(2)} SOL</p>
           </div>
+          <p className="mt-3 text-sm text-slate-400">
+            {bid.status === "Open"
+              ? `${bid.bid_count || 0} bids received. Government can award the lowest bid.`
+              : `Awarded to ${bid.contractor_pubkey || "selected contractor"}.`}
+          </p>
           <Tracker current={trackerStep(bid.status, bid.payment_released)} />
         </Card>
       ))}
     </div>
   );
+}
+
+function formatDateTime(value) {
+  try {
+    return new Intl.DateTimeFormat(undefined, {
+      dateStyle: "medium",
+      timeStyle: "short",
+    }).format(new Date(value));
+  } catch {
+    return value;
+  }
 }
 
 function ProofUpload() {
