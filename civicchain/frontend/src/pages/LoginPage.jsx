@@ -18,7 +18,6 @@ import {
   generateCitizenId,
   getLoginAudit,
   getSavedCitizenId,
-  isDemoMode,
   roles,
   saveCitizenId,
   saveSession,
@@ -42,17 +41,15 @@ export default function LoginPage() {
   const selected = roles[role];
   const audit = getLoginAudit();
 
-  const demoModeEnabled = isDemoMode();
-
   useEffect(() => {
     if (role === "citizen") return; // citizens use a generated ID, not a wallet
-    if (!demoModeEnabled && connected && publicKey) {
+    if (connected && publicKey) {
       setId(publicKey.toBase58());
       setError("");
-    } else if (!demoModeEnabled && !connected) {
+    } else {
       setId("");
     }
-  }, [connected, publicKey, demoModeEnabled, role]);
+  }, [connected, publicKey, role]);
 
   const handleGenerateCitizenId = () => {
     const newId = generateCitizenId();
@@ -68,7 +65,7 @@ export default function LoginPage() {
 
   const submit = (event) => {
     event.preventDefault();
-    const loginId = role === "citizen" || demoModeEnabled
+    const loginId = role === "citizen"
       ? id
       : (publicKey ? publicKey.toBase58() : "");
     const validation = validateLogin(role, loginId);
@@ -140,10 +137,10 @@ export default function LoginPage() {
                     }`}
                     onClick={() => {
                       setRole(key);
-                      if (demoModeEnabled && key !== "citizen") {
-                        setId(roles[key].placeholder);
-                      } else if (key === "citizen") {
+                      if (key === "citizen") {
                         setId(getSavedCitizenId() || "");
+                      } else {
+                        setId(publicKey?.toBase58() || "");
                       }
                       setError("");
                     }}
@@ -200,26 +197,6 @@ export default function LoginPage() {
                     </p>
                   </div>
                 </div>
-              ) : demoModeEnabled ? (
-                <>
-                  <Field label={selected.idLabel}>
-                    <input
-                      className={inputClass}
-                      value={id}
-                      placeholder={selected.placeholder}
-                      autoComplete="username"
-                      onChange={(event) => {
-                        setId(event.target.value);
-                        setError("");
-                      }}
-                    />
-                  </Field>
-
-                  <div className="rounded-lg border border-white/10 bg-navy/50 p-4 text-sm text-slate-300">
-                    <p className="font-bold text-white">ID policy</p>
-                    <p className="mt-1">{selected.hint}</p>
-                  </div>
-                </>
               ) : (
                 <div className="space-y-4">
                   <div className="rounded-lg border border-white/10 bg-navy/50 p-4 text-sm text-slate-300">
@@ -255,9 +232,9 @@ export default function LoginPage() {
                 <PolicyRow label="Expiry window" value="8 hours" />
                 <PolicyRow
                   label="Wallet optional"
-                  value={role === "citizen" ? "Not required" : demoModeEnabled ? "Fallback ID active" : "Required"}
+                  value={role === "citizen" ? "Not required" : "Required"}
                 />
-                <PolicyRow label="Backend guard" value={demoModeEnabled ? "Demo mode" : "Production"} />
+                <PolicyRow label="Backend guard" value="Production" />
               </div>
             </Card>
 
