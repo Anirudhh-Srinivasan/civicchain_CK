@@ -24,9 +24,6 @@ function apiMessage(error) {
 }
 
 function readLocalComplaints() {
-  const demoSeed = isDemoMode();
-  if (!demoSeed) return [];
-
   try {
     const stored = window.localStorage.getItem(localKey);
     if (stored) return JSON.parse(stored).map(normalizeComplaint);
