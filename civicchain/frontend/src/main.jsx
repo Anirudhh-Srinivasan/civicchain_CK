@@ -12,7 +12,7 @@ import CitizenPortal from "./pages/CitizenPortal.jsx";
 import ContractorPortal from "./pages/ContractorPortal.jsx";
 import GovernmentPortal from "./pages/GovernmentPortal.jsx";
 import LoginPage from "./pages/LoginPage.jsx";
-import { getSession, pathForRole, clearSession, roles, isDemoMode } from "./services/auth.js";
+import { getSession, pathForRole, clearSession, roles } from "./services/auth.js";
 
 function Providers({ children }) {
   const wallets = useMemo(() => [new PhantomWalletAdapter()], []);
@@ -34,13 +34,12 @@ function HomeRedirect() {
 function RequireRole({ role, children }) {
   const session = getSession();
   const { publicKey, connected } = useWallet();
-  const demoSeed = isDemoMode();
 
   if (!session) return <Navigate to="/login" replace />;
   if (session.role !== role) return <Navigate to={pathForRole(session.role)} replace />;
 
   // Citizens authenticate with a generated Citizen ID, not a wallet.
-  if (!demoSeed && role !== "citizen") {
+  if (role !== "citizen") {
     if (!connected || !publicKey) {
       return (
         <div className="flex min-h-[60vh] flex-col items-center justify-center p-6 text-center">

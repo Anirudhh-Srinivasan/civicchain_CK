@@ -97,22 +97,14 @@ export function validateLogin(role, id) {
     return "Enter a valid Citizen ID (e.g. CTZ-AB12CD), or generate a new one below.";
   }
 
-  if (!normalized) return `Enter a ${selected.idLabel.toLowerCase()} to continue.`;
+  if (!normalized) return "Connect your Phantom wallet to continue.";
 
   // Always allow valid Solana public keys (base58, length 32-44)
   if (/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(normalized)) {
     return "";
   }
 
-  // Demo placeholders are only allowed if demo seed is enabled
-  const demoSeed = isDemoMode();
-  if (demoSeed && selected.pattern.test(normalized)) {
-    return "";
-  }
-
-  return demoSeed
-    ? selected.hint
-    : "A valid Solana public key is required.";
+  return "A valid Phantom/Solana wallet is required.";
 }
 
 
