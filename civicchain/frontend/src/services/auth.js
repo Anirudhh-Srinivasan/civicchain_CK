@@ -60,9 +60,23 @@ export function validateLogin(role, id) {
   const normalized = id.trim();
   if (!selected) return "Choose a valid role.";
   if (!normalized) return `Enter a ${selected.idLabel.toLowerCase()} to continue.`;
-  if (!selected.pattern.test(normalized)) return selected.hint;
-  return "";
+
+  // Always allow valid Solana public keys (base58, length 32-44)
+  if (/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(normalized)) {
+    return "";
+  }
+
+  // Demo placeholders are only allowed if demo seed is enabled
+  const demoSeed = import.meta.env.VITE_ENABLE_DEMO_SEED === "true";
+  if (demoSeed && selected.pattern.test(normalized)) {
+    return "";
+  }
+
+  return demoSeed
+    ? selected.hint
+    : "A valid Solana public key is required.";
 }
+
 
 export function saveSession(role, id) {
   const error = validateLogin(role, id);
