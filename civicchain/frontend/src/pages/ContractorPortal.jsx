@@ -162,6 +162,13 @@ function ActiveBids() {
         const displayAmount = bid.contractor_pubkey === myId
           ? (bid.bid_amount || bid.lowest_bid?.amount || myBid?.amount || 0)
           : (myBid?.amount || 0);
+        const lowestAmount = bid.lowest_bid?.amount;
+        const myAmount = myBid?.amount ?? displayAmount;
+        const wonByMe = bid.contractor_pubkey === myId;
+        const isLowestBid = lowestAmount != null
+          ? myAmount <= lowestAmount
+          : wonByMe;
+        const amountColorClass = isLowestBid ? "text-success" : "text-danger";
         return (
           <Card key={`${bid.id}-${displayAmount}`} className="p-5">
             <div className="flex items-start justify-between gap-4">
@@ -170,7 +177,14 @@ function ActiveBids() {
                 <h2 className="text-xl font-black">{bid.title}</h2>
                 <p className="mt-2 text-sm text-slate-400">{bid.location}</p>
               </div>
-              <p className="text-2xl font-black text-success">{displayAmount.toFixed(2)} SOL</p>
+              <div className="text-right">
+                <p className={`text-2xl font-black ${amountColorClass}`}>{displayAmount.toFixed(2)} SOL</p>
+                {lowestAmount != null && (
+                  <p className="mt-1 text-xs font-semibold text-slate-400">
+                    Lowest bid: {lowestAmount.toFixed(2)} SOL
+                  </p>
+                )}
+              </div>
             </div>
             <p className="mt-3 text-sm text-slate-400">
               {bid.status === "Open"
