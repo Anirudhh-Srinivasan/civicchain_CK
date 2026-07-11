@@ -142,31 +142,47 @@ function BidModal({ complaint, onClose, onSaved }) {
 }
 
 function ActiveBids() {
+  const { publicKey } = useWallet();
+  const session = getSession();
+  const myId = publicKey?.toBase58() || session?.id || null;
   const { data, loading, error } = useComplaints();
-  const bids = data.filter((item) => (item.bids?.length || 0) > 0 || ["Assigned", "Completed", "Verified"].includes(item.status));
+  const bids = data.filter((item) => {
+    if (!myId) return false;
+    const placedByMe = (item.bids || []).some((bid) => bid.contractor_pubkey === myId);
+    const wonByMe = item.contractor_pubkey === myId;
+    return placedByMe || wonByMe;
+  });
   if (loading) return <LoadingState />;
   if (error) return <ErrorState message={error} />;
-  if (!bids.length) return <EmptyState title="No active bids" text="Bids placed from the dashboard are tracked here during the demo." />;
+  if (!bids.length) return <EmptyState title="No active bids" text="Bids you place from the dashboard will be tracked here." />;
   return (
     <div className="grid gap-5 lg:grid-cols-2">
-      {bids.map((bid) => (
-        <Card key={`${bid.id}-${bid.bid_amount}`} className="p-5">
-          <div className="flex items-start justify-between gap-4">
-            <div>
-              <p className="text-sm font-bold uppercase text-cyan">{bid.category}</p>
-              <h2 className="text-xl font-black">{bid.title}</h2>
-              <p className="mt-2 text-sm text-slate-400">{bid.location}</p>
+      {bids.map((bid) => {
+        const myBid = (bid.bids || []).find((b) => b.contractor_pubkey === myId);
+        const displayAmount = bid.contractor_pubkey === myId
+          ? (bid.bid_amount || bid.lowest_bid?.amount || myBid?.amount || 0)
+          : (myBid?.amount || 0);
+        return (
+          <Card key={`${bid.id}-${displayAmount}`} className="p-5">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <p className="text-sm font-bold uppercase text-cyan">{bid.category}</p>
+                <h2 className="text-xl font-black">{bid.title}</h2>
+                <p className="mt-2 text-sm text-slate-400">{bid.location}</p>
+              </div>
+              <p className="text-2xl font-black text-success">{displayAmount.toFixed(2)} SOL</p>
             </div>
-            <p className="text-2xl font-black text-success">{(bid.bid_amount || bid.lowest_bid?.amount || 0).toFixed(2)} SOL</p>
-          </div>
-          <p className="mt-3 text-sm text-slate-400">
-            {bid.status === "Open"
-              ? `${bid.bid_count || 0} bids received. Lowest bid is assigned automatically when time expires.`
-              : `Awarded to ${bid.contractor_pubkey || "selected contractor"}.`}
-          </p>
-          <Tracker current={trackerStep(bid.status, bid.payment_released)} />
-        </Card>
-      ))}
+            <p className="mt-3 text-sm text-slate-400">
+              {bid.status === "Open"
+                ? "Your bid is in. Lowest bid is assigned automatically when time expires."
+                : bid.contractor_pubkey === myId
+                  ? "Awarded to you."
+                  : "Awarded to another contractor."}
+            </p>
+            <Tracker current={trackerStep(bid.status, bid.payment_released)} />
+          </Card>
+        );
+      })}
     </div>
   );
 }
@@ -202,8 +218,14 @@ function BidCountdown({ deadline }) {
 }
 
 function ProofUpload() {
+  const { publicKey } = useWallet();
+  const session = getSession();
+  const myId = publicKey?.toBase58() || session?.id || null;
   const { data, loading, error, refresh } = useComplaints();
-  const jobs = useMemo(() => data.filter((item) => ["Assigned", "Completed"].includes(item.status)), [data]);
+  const jobs = useMemo(
+    () => data.filter((item) => ["Assigned", "Completed"].includes(item.status) && item.contractor_pubkey === myId),
+    [data, myId]
+  );
   const [selectedId, setSelectedId] = useState("");
   const [files, setFiles] = useState({ before: null, after: null });
   const [proofText, setProofText] = useState("");
@@ -237,6 +259,14 @@ function ProofUpload() {
   };
   if (loading) return <LoadingState />;
   if (error) return <ErrorState message={error} />;
+  if (!jobs.length) {
+    return (
+      <EmptyState
+        title="No accepted jobs yet"
+        text="Once one of your bids is accepted, it will appear here for proof upload."
+      />
+    );
+  }
   return (
     <Card className="mx-auto max-w-3xl p-6">
       <h2 className="text-2xl font-black">Upload Work Proof</h2>
