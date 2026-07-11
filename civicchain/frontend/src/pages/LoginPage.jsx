@@ -85,13 +85,13 @@ export default function LoginPage() {
   return (
     <main className="min-h-screen bg-[linear-gradient(145deg,#07111f_0%,#0b1426_48%,#111827_100%)] px-4 py-5 lg:py-6">
       <div className="mx-auto grid min-h-[calc(100vh-2.5rem)] max-w-[1060px] content-center items-start gap-5 lg:grid-cols-[17rem_minmax(0,1fr)] xl:grid-cols-[17rem_minmax(0,1fr)_18rem]">
-        <section className="flex flex-col justify-between gap-7 rounded-lg border border-white/10 bg-white/[0.035] p-6 lg:min-h-[640px] lg:p-7">
+        <section className="flex flex-col justify-between gap-7 overflow-hidden rounded-lg border border-white/10 bg-white/[0.035] p-5 sm:p-6 lg:min-h-[640px] lg:p-7">
           <div className="flex items-center gap-3">
-            <div className="grid h-11 w-11 place-items-center rounded-lg bg-cyan text-navy">
+            <div className="grid h-11 w-11 shrink-0 place-items-center rounded-lg bg-cyan text-navy">
               <ShieldCheck className="h-6 w-6" />
             </div>
-            <div>
-              <p className="text-xl font-black tracking-wide">CivicChain</p>
+            <div className="min-w-0">
+              <p className="truncate text-xl font-black tracking-wide">CivicChain</p>
               <p className="text-sm text-slate-400">Role based civic grievance access</p>
             </div>
           </div>
@@ -101,10 +101,10 @@ export default function LoginPage() {
               <Activity className="h-4 w-4" />
               Devnet services online
             </div>
-            <h1 className="mt-5 max-w-3xl text-4xl font-black leading-tight text-white md:text-5xl">
+            <h1 className="mt-5 break-words text-3xl font-black leading-[1.15] text-white sm:text-4xl md:text-5xl">
               Civic operations console
             </h1>
-            <p className="mt-5 text-lg text-slate-300">
+            <p className="mt-5 text-base text-slate-300 sm:text-lg">
               Sign in with a role-scoped ID to open the complaint, contractor, or oversight workspace with matching permissions.
             </p>
           </div>
