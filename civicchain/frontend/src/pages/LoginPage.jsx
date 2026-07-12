@@ -24,6 +24,7 @@ import {
   validateLogin,
 } from "../services/auth";
 import { Card, Field, inputClass } from "../components/ui";
+import { getPublicConfig } from "../services/api";
 
 
 const roleIcons = {
@@ -38,8 +39,28 @@ export default function LoginPage() {
   const [role, setRole] = useState("citizen");
   const [id, setId] = useState(() => getSavedCitizenId() || "");
   const [error, setError] = useState("");
+  const [governmentWalletAddress, setGovernmentWalletAddress] = useState(null);
+  const [governmentWalletLoaded, setGovernmentWalletLoaded] = useState(false);
   const selected = roles[role];
   const audit = getLoginAudit();
+
+  useEffect(() => {
+    let cancelled = false;
+    getPublicConfig()
+      .then((config) => {
+        if (cancelled) return;
+        setGovernmentWalletAddress(config?.government_wallet || null);
+        setGovernmentWalletLoaded(true);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setGovernmentWalletAddress(null);
+        setGovernmentWalletLoaded(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     if (role === "citizen") return; // citizens use a generated ID, not a wallet
@@ -68,13 +89,14 @@ export default function LoginPage() {
     const loginId = role === "citizen"
       ? id
       : (publicKey ? publicKey.toBase58() : "");
-    const validation = validateLogin(role, loginId);
+    const validationOptions = { governmentWalletAddress, governmentWalletLoaded };
+    const validation = validateLogin(role, loginId, validationOptions);
     if (validation) {
       setError(validation);
       return;
     }
     try {
-      const session = saveSession(role, loginId);
+      const session = saveSession(role, loginId, validationOptions);
       navigate(roles[session.role].path, { replace: true });
     } catch (error) {
       setError(error.message);
