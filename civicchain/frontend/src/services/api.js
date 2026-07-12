@@ -10,6 +10,11 @@ export const api = axios.create({
   timeout: 12000,
 });
 
+export async function getPublicConfig() {
+  const response = await api.get("/config");
+  return response.data;
+}
+
 const statusCycle = ["Open", "Assigned", "Completed", "Verified"];
 const categoryCycle = ["pothole", "flooding", "garbage", "streetlight", "water leak"];
 const localKey = "civicchain:complaints";
