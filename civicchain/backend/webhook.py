@@ -146,6 +146,18 @@ def load_release_payment():
     return release_payment
 
 
+def load_direct_payout():
+    try:
+        from backend.payout import send_direct_payout
+    except ImportError as exc:
+        raise HTTPException(
+            status_code=500,
+            detail="Payout backend unavailable. Check backend/payout.py dependencies.",
+        ) from exc
+
+    return send_direct_payout
+
+
 def init_db() -> None:
     with get_db() as conn:
         conn.execute(
@@ -518,6 +530,32 @@ def should_attempt_release(request: VerifyRequest, ai_result: dict[str, Any]) ->
     )
 
 
+def should_attempt_direct_payout(
+    row: sqlite3.Row | None, ai_result: dict[str, Any], request: VerifyRequest
+) -> bool:
+    """Whether to send a direct SOL transfer from the single government wallet.
+
+    This is the practical payout path: it only needs the contractor's wallet
+    address and the accepted bid amount, both already stored on the
+    complaint row once a bid is assigned - no on-chain escrow PDAs required.
+    """
+    if row is None:
+        return False
+    if not is_trusted_ai_approval(ai_result):
+        return False
+    if not request.proof_hash or len(request.proof_hash.strip()) < 16:
+        return False
+    if row["payment_released"]:
+        return False
+    contractor_pubkey = row["contractor_pubkey"]
+    bid_amount = row["bid_amount"]
+    if not contractor_pubkey or not valid_solana_pubkey(contractor_pubkey):
+        return False
+    if not bid_amount or float(bid_amount) <= 0:
+        return False
+    return True
+
+
 def find_complaint_for_verification(conn: sqlite3.Connection, request: VerifyRequest) -> sqlite3.Row | None:
     if request.complaint_id is not None:
         return conn.execute(
@@ -716,6 +754,23 @@ def extract_complaints(transaction: dict[str, Any]) -> list[dict[str, Any]]:
     return complaints
 
 
+@app.get("/config")
+def get_public_config() -> dict[str, Any]:
+    """Public, non-secret config the frontend needs (safe to expose)."""
+    government_wallet = None
+    try:
+        from backend.payout import government_wallet_address
+
+        government_wallet = government_wallet_address()
+    except ImportError:
+        government_wallet = None
+
+    return {
+        "government_wallet": government_wallet,
+        "program_id": PROGRAM_ID,
+    }
+
+
 @app.post("/webhook")
 async def helius_webhook(request: Request) -> dict[str, Any]:
     init_db()
@@ -832,6 +887,16 @@ def verify_complaint(request: VerifyRequest) -> dict[str, Any]:
         except Exception as exc:
             payment_error = str(exc)
             should_release = False
+
+    if payment_signature is None and should_attempt_direct_payout(row, ai_result, request):
+        try:
+            send_direct_payout = load_direct_payout()
+            payment_signature = send_direct_payout(
+                contractor_pubkey=row["contractor_pubkey"],
+                amount_sol=float(row["bid_amount"]),
+            )
+        except Exception as exc:
+            payment_error = payment_error or str(exc)
 
     updated_complaint = None
     if row is not None:

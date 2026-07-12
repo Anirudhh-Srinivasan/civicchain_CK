@@ -83,7 +83,7 @@ export function getSession() {
   }
 }
 
-export function validateLogin(role, id) {
+export function validateLogin(role, id, options = {}) {
   const selected = roles[role];
   const normalized = id.trim();
   if (!selected) return "Choose a valid role.";
@@ -100,16 +100,29 @@ export function validateLogin(role, id) {
   if (!normalized) return "Connect your Phantom wallet to continue.";
 
   // Always allow valid Solana public keys (base58, length 32-44)
-  if (/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(normalized)) {
-    return "";
+  if (!/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(normalized)) {
+    return "A valid Phantom/Solana wallet is required.";
   }
 
-  return "A valid Phantom/Solana wallet is required.";
+  if (role === "government") {
+    const { governmentWalletAddress, governmentWalletLoaded } = options;
+    if (!governmentWalletLoaded) {
+      return "Could not verify the government wallet right now. Please try again.";
+    }
+    if (!governmentWalletAddress) {
+      return "Government access is not configured yet. Contact the administrator.";
+    }
+    if (normalized !== governmentWalletAddress) {
+      return "This wallet is not authorized for Government access. Connect the official government wallet.";
+    }
+  }
+
+  return "";
 }
 
 
-export function saveSession(role, id) {
-  const error = validateLogin(role, id);
+export function saveSession(role, id, options = {}) {
+  const error = validateLogin(role, id, options);
   if (error) throw new Error(error);
   const now = new Date();
   const session = {
