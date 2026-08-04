@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Link, Route, Routes, useParams } from "react-router-dom";
+import { Link, Route, Routes, useLocation, useParams } from "react-router-dom";
 import { WalletMultiButton } from "@solana/wallet-adapter-react-ui";
 import { useWallet } from "@solana/wallet-adapter-react";
-import { Camera, Clock3, FileText, Home, Map, MapPin, Send } from "lucide-react";
+import { Camera, Clock3, FileText, Home, Map, Send } from "lucide-react";
 import ComplaintCard from "../components/ComplaintCard";
-import ComplaintMap from "../components/ComplaintMap";
+import LocationPicker from "../components/LocationPicker";
 import PortalNav from "../components/PortalNav";
 import SessionBanner from "../components/SessionBanner";
 import { Card, EmptyState, ErrorState, Field, LoadingState, StatusBadge, inputClass } from "../components/ui";
@@ -39,7 +39,17 @@ export default function CitizenPortal() {
 function CitizenHome() {
   const { publicKey } = useWallet();
   const session = getSession();
-  const [form, setForm] = useState({ title: "", description: "", location: "", category: "pothole" });
+  const routeLocation = useLocation();
+  const selectedLocation = routeLocation.state?.selectedLocation;
+  const [form, setForm] = useState({
+    title: "",
+    description: "",
+    location: selectedLocation?.location || "",
+    latitude: selectedLocation?.latitude ?? null,
+    longitude: selectedLocation?.longitude ?? null,
+    category: "pothole",
+    customCategory: "",
+  });
   const [bidMinutes, setBidMinutes] = useState("30");
   const [photoFile, setPhotoFile] = useState(null);
   const [state, setState] = useState({ loading: false, error: "", saved: null });
@@ -48,19 +58,32 @@ function CitizenHome() {
     event.preventDefault();
     setState({ loading: true, error: "", saved: null });
     try {
-      const coordinates = await geocodeAddress(form.location);
+      const customCategory = form.customCategory.trim();
+      if (form.category === "other" && !customCategory) {
+        throw new Error("Describe the type of civic issue before submitting.");
+      }
+      const pinnedCoordinates = form.latitude !== null && form.longitude !== null &&
+        Number.isFinite(Number(form.latitude)) && Number.isFinite(Number(form.longitude))
+        ? { latitude: Number(form.latitude), longitude: Number(form.longitude) }
+        : null;
+      const coordinates = pinnedCoordinates || await geocodeAddress(form.location);
+      if (!coordinates) {
+        throw new Error("Select a location from the suggestions or place the red pin on the map.");
+      }
       const durationMinutes = Math.max(1, Number(bidMinutes) || 30);
       const bidDeadline = new Date(Date.now() + durationMinutes * 60 * 1000).toISOString();
       const saved = await createComplaint({
-        ...form,
-        ...(coordinates
-          ? { latitude: coordinates.latitude, longitude: coordinates.longitude }
-          : {}),
+        title: form.title,
+        description: form.description,
+        location: form.location,
+        category: form.category === "other" ? customCategory : form.category,
+        latitude: coordinates.latitude,
+        longitude: coordinates.longitude,
         citizen_pubkey: publicKey?.toBase58() || session?.id || null,
         bid_deadline: bidDeadline,
         photo: photoFile,
       });
-      setForm({ title: "", description: "", location: "", category: "pothole" });
+      setForm({ title: "", description: "", location: "", latitude: null, longitude: null, category: "pothole", customCategory: "" });
       setBidMinutes("30");
       setPhotoFile(null);
       setState({ loading: false, error: "", saved });
@@ -88,17 +111,13 @@ function CitizenHome() {
         <Field label="Description">
           <textarea className={inputClass} required rows="4" value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} />
         </Field>
-        <Field label="Address / Landmark">
-          <div className="relative">
-            <MapPin className="pointer-events-none absolute left-3 top-3.5 h-4 w-4 text-cyan" />
-            <input
-              className={`${inputClass} pl-10`}
-              required
-              placeholder="Example: 12 Main Road, near Anna Nagar Tower, Chennai"
-              value={form.location}
-              onChange={(e) => setForm({ ...form, location: e.target.value })}
-            />
-          </div>
+        <Field label="Issue location">
+          <LocationPicker
+            value={form.location}
+            latitude={form.latitude}
+            longitude={form.longitude}
+            onChange={(location) => setForm((current) => ({ ...current, ...location }))}
+          />
         </Field>
         <Field label="Category">
           <select className={inputClass} value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })}>
@@ -107,8 +126,21 @@ function CitizenHome() {
             <option value="garbage">Garbage</option>
             <option value="streetlight">Streetlight</option>
             <option value="water leak">Water leak</option>
+            <option value="other">Other</option>
           </select>
         </Field>
+        {form.category === "other" && (
+          <Field label="Type of issue">
+            <input
+              className={inputClass}
+              required
+              maxLength="60"
+              placeholder="Example: Damaged public bench"
+              value={form.customCategory}
+              onChange={(event) => setForm({ ...form, customCategory: event.target.value })}
+            />
+          </Field>
+        )}
         <Field label="Contractor bidding window">
           <div className="relative">
             <Clock3 className="pointer-events-none absolute left-3 top-3.5 h-4 w-4 text-cyan" />
@@ -164,9 +196,36 @@ function CitizenComplaints() {
 
 function CitizenMap() {
   const { data, loading, error } = useComplaints();
+  const [selection, setSelection] = useState({ location: "", latitude: null, longitude: null });
   if (loading) return <LoadingState label="Loading Chennai map" />;
   if (error) return <ErrorState message={error} />;
-  return <ComplaintMap complaints={data} detailBase="/citizen/complaints" />;
+  return (
+    <Card className="p-5 sm:p-6">
+      <div className="mb-5 flex flex-wrap items-end justify-between gap-4">
+        <div>
+          <p className="text-sm font-bold uppercase tracking-[0.2em] text-cyan">Location Explorer</p>
+          <h1 className="mt-2 text-2xl font-black">Find a precise complaint location</h1>
+        </div>
+        {selection.latitude != null && selection.longitude != null && (
+          <Link
+            className="rounded-lg bg-cyan px-4 py-2 text-sm font-black text-navy"
+            to="/citizen"
+            state={{ selectedLocation: selection }}
+          >
+            Report this location
+          </Link>
+        )}
+      </div>
+      <LocationPicker
+        value={selection.location}
+        latitude={selection.latitude}
+        longitude={selection.longitude}
+        onChange={setSelection}
+        complaints={data}
+        detailBase="/citizen/complaints"
+      />
+    </Card>
+  );
 }
 
 function CitizenDetail() {

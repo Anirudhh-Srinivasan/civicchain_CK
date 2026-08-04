@@ -11,6 +11,11 @@ export default function SessionBanner({ role }) {
   const session = getSession();
   if (!session) return null;
   const label = roles[role]?.label || role;
+  const context = role === "contractor"
+    ? `${session.profile?.screeningStatus === "pre-screened" ? "Pre-screened" : "Screening pending"} | ${session.profile?.credibilityScore || 0}/100`
+    : role === "government"
+      ? session.profile?.department
+      : null;
 
   return (
     <div className="mb-6 flex flex-col gap-3 rounded-lg border border-white/10 bg-white/[0.04] p-4 sm:flex-row sm:items-center sm:justify-between">
@@ -26,6 +31,7 @@ export default function SessionBanner({ role }) {
       <div className="rounded-lg border border-white/10 bg-navy/50 px-3 py-2 text-sm">
         <p className="text-xs text-slate-500">Active ID</p>
         <p className="max-w-[18rem] truncate font-black text-white">{session.id}</p>
+        {context && <p className="mt-1 max-w-[18rem] truncate text-xs font-semibold text-cyan">{context}</p>}
       </div>
     </div>
   );
