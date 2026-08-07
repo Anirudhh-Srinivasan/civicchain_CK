@@ -11,10 +11,44 @@ export const chennaiLocations = {
   Chromepet: [12.9516, 80.1462],
 };
 
+function validCoordinates(latitude, longitude) {
+  return (
+    Number.isFinite(latitude)
+    && Number.isFinite(longitude)
+    && latitude >= -90
+    && latitude <= 90
+    && longitude >= -180
+    && longitude <= 180
+  );
+}
+
+function coordinateParts(location = "") {
+  const match = String(location)
+    .trim()
+    .match(/^\(?\s*([+-]?(?:\d+(?:\.\d+)?|\.\d+))\s*(?:,|\s)\s*([+-]?(?:\d+(?:\.\d+)?|\.\d+))\s*\)?$/);
+
+  if (!match) return null;
+
+  return { latitude: Number(match[1]), longitude: Number(match[2]) };
+}
+
+export function parseCoordinates(location = "") {
+  const parts = coordinateParts(location);
+  if (!parts) return null;
+
+  const { latitude, longitude } = parts;
+  if (!validCoordinates(latitude, longitude)) return null;
+
+  return { latitude, longitude };
+}
+
 export function coordinatesFor(location = "", id = 0, latitude = null, longitude = null) {
-  const lat = Number(latitude);
-  const lng = Number(longitude);
-  if (Number.isFinite(lat) && Number.isFinite(lng)) return [lat, lng];
+  if (latitude !== null && latitude !== undefined && latitude !== ""
+    && longitude !== null && longitude !== undefined && longitude !== "") {
+    const lat = Number(latitude);
+    const lng = Number(longitude);
+    if (validCoordinates(lat, lng)) return [lat, lng];
+  }
 
   const match = Object.entries(chennaiLocations).find(([name]) =>
     location.toLowerCase().includes(name.toLowerCase()),
@@ -30,16 +64,21 @@ function normalizeSearchAddress(address) {
 }
 
 export async function geocodeAddress(address) {
-  const search = normalizeSearchAddress(address);
-  if (!search) return null;
-
-  const localMatch = coordinatesFor(search, 0);
-  const matchedKnownArea = Object.keys(chennaiLocations).some((name) =>
-    search.toLowerCase().includes(name.toLowerCase()),
-  );
-  if (matchedKnownArea) {
-    return { latitude: localMatch[0], longitude: localMatch[1], source: "local" };
+  const suppliedCoordinates = coordinateParts(address);
+  if (suppliedCoordinates && !validCoordinates(
+    suppliedCoordinates.latitude,
+    suppliedCoordinates.longitude,
+  )) {
+    return { ok: false, reason: "invalid_coordinates" };
   }
+
+  const parsedCoordinates = parseCoordinates(address);
+  if (parsedCoordinates) {
+    return { ok: true, ...parsedCoordinates, source: "coordinates" };
+  }
+
+  const search = normalizeSearchAddress(address);
+  if (!search) return { ok: false, reason: "empty" };
 
   const params = new URLSearchParams({
     q: search,
@@ -52,13 +91,13 @@ export async function geocodeAddress(address) {
     const response = await fetch(`https://nominatim.openstreetmap.org/search?${params.toString()}`, {
       headers: { Accept: "application/json" },
     });
-    if (!response.ok) return null;
+    if (!response.ok) return { ok: false, reason: "service_error" };
     const [result] = await response.json();
     const latitude = Number(result?.lat);
     const longitude = Number(result?.lon);
-    if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return null;
-    return { latitude, longitude, source: "nominatim" };
+    if (!validCoordinates(latitude, longitude)) return { ok: false, reason: "not_found" };
+    return { ok: true, latitude, longitude, source: "nominatim" };
   } catch {
-    return null;
+    return { ok: false, reason: "service_error" };
   }
 }
