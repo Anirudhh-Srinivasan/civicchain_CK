@@ -13,6 +13,8 @@ import { createComplaint, getComplaint, getComplaints, reportProblem } from "../
 import { getSession, isDemoMode } from "../services/auth";
 import { geocodeAddress } from "../services/geo";
 
+const LOCATION_RESOLUTION_ERROR = "We couldn't locate that address. Double-check it or enter coordinates as latitude, longitude.";
+
 const links = [
   { to: "/citizen", label: "Report", icon: Home },
   { to: "/citizen/my-complaints", label: "My Complaints", icon: FileText },
@@ -49,13 +51,16 @@ function CitizenHome() {
     setState({ loading: true, error: "", saved: null });
     try {
       const coordinates = await geocodeAddress(form.location);
+      if (!coordinates.ok) {
+        setState({ loading: false, error: LOCATION_RESOLUTION_ERROR, saved: null });
+        return;
+      }
       const durationMinutes = Math.max(1, Number(bidMinutes) || 30);
       const bidDeadline = new Date(Date.now() + durationMinutes * 60 * 1000).toISOString();
       const saved = await createComplaint({
         ...form,
-        ...(coordinates
-          ? { latitude: coordinates.latitude, longitude: coordinates.longitude }
-          : {}),
+        latitude: coordinates.latitude,
+        longitude: coordinates.longitude,
         citizen_pubkey: session?.id || null,
         bid_deadline: bidDeadline,
         photo: photoFile,
