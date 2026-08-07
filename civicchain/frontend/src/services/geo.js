@@ -63,6 +63,42 @@ function normalizeSearchAddress(address) {
   return /chennai|tamil nadu|india/i.test(trimmed) ? trimmed : `${trimmed}, Chennai, India`;
 }
 
+const NOMINATIM_REQUEST_INTERVAL_MS = 1100;
+
+function searchCandidates(address) {
+  const components = String(address)
+    .split(",")
+    .map((component) => component.trim())
+    .filter(Boolean);
+
+  return components.map((_, index) => components.slice(index).join(", "));
+}
+
+function wait(milliseconds) {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
+async function searchNominatim(address) {
+  const params = new URLSearchParams({
+    q: normalizeSearchAddress(address),
+    format: "jsonv2",
+    limit: "1",
+    countrycodes: "in",
+  });
+
+  const response = await fetch(`https://nominatim.openstreetmap.org/search?${params.toString()}`, {
+    headers: { Accept: "application/json" },
+  });
+  if (!response.ok) return null;
+
+  const [result] = await response.json();
+  const latitude = Number(result?.lat);
+  const longitude = Number(result?.lon);
+  if (!validCoordinates(latitude, longitude)) return null;
+
+  return { latitude, longitude };
+}
+
 export async function geocodeAddress(address) {
   const suppliedCoordinates = coordinateParts(address);
   if (suppliedCoordinates && !validCoordinates(
@@ -77,27 +113,27 @@ export async function geocodeAddress(address) {
     return { ok: true, ...parsedCoordinates, source: "coordinates" };
   }
 
-  const search = normalizeSearchAddress(address);
-  if (!search) return { ok: false, reason: "empty" };
+  const candidates = searchCandidates(address);
+  if (!candidates.length) return { ok: false, reason: "empty" };
 
-  const params = new URLSearchParams({
-    q: search,
-    format: "jsonv2",
-    limit: "1",
-    countrycodes: "in",
-  });
+  for (let index = 0; index < candidates.length; index += 1) {
+    if (index > 0) await wait(NOMINATIM_REQUEST_INTERVAL_MS);
 
-  try {
-    const response = await fetch(`https://nominatim.openstreetmap.org/search?${params.toString()}`, {
-      headers: { Accept: "application/json" },
-    });
-    if (!response.ok) return { ok: false, reason: "service_error" };
-    const [result] = await response.json();
-    const latitude = Number(result?.lat);
-    const longitude = Number(result?.lon);
-    if (!validCoordinates(latitude, longitude)) return { ok: false, reason: "not_found" };
-    return { ok: true, latitude, longitude, source: "nominatim" };
-  } catch {
-    return { ok: false, reason: "service_error" };
+    try {
+      const result = await searchNominatim(candidates[index]);
+      if (result) {
+        return {
+          ok: true,
+          ...result,
+          source: "nominatim",
+          approximate: index > 0,
+          matchedAddress: candidates[index],
+        };
+      }
+    } catch {
+      // A failed request should not prevent less-specific fallbacks from being tried.
+    }
   }
+
+  return { ok: false, reason: "not_found" };
 }
