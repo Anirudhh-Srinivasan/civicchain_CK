@@ -49,30 +49,6 @@ button:disabled {
   background: #111827;
 }
 
-.location-pin-shell {
-  background: transparent;
-  border: 0;
-}
-
-.location-pin {
-  display: grid;
-  width: 30px;
-  height: 30px;
-  place-items: center;
-  transform: rotate(45deg);
-  border: 3px solid #ffffff;
-  border-radius: 50% 50% 50% 0;
-  background: #ef4444;
-  box-shadow: 0 5px 18px rgba(239, 68, 68, 0.55);
-}
-
-.location-pin span {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: #ffffff;
-}
-
 .page-enter {
   animation: page-in 180ms ease-out both;
 }

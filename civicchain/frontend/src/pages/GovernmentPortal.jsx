@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import { Link, Route, Routes, useParams } from "react-router-dom";
+import { WalletMultiButton } from "@solana/wallet-adapter-react-ui";
 import { BarChart3, Clock3, Coins, FileSearch, Map, Table2 } from "lucide-react";
 import ComplaintMap from "../components/ComplaintMap";
 import PortalNav from "../components/PortalNav";
@@ -18,6 +19,9 @@ export default function GovernmentPortal() {
   return (
     <div className="page-enter">
       <SessionBanner role="government" />
+      <div className="mb-6 flex justify-end">
+        <WalletMultiButton />
+      </div>
       <PortalNav links={links} />
       <Routes>
         <Route index element={<Overview />} />
@@ -73,10 +77,6 @@ function ComplaintsTable({ compact = false }) {
       ),
     [data, filters],
   );
-  const categories = useMemo(
-    () => [...new Set(data.map((item) => item.category).filter(Boolean))].sort(),
-    [data],
-  );
   if (loading) return <LoadingState />;
   if (error) return <ErrorState message={error} />;
   if (!data.length) return <EmptyState title="No complaints indexed" text="Run the seed script or submit a complaint to populate the dashboard." />;
@@ -93,7 +93,11 @@ function ComplaintsTable({ compact = false }) {
           </select>
           <select className={inputClass} value={filters.category} onChange={(e) => setFilters({ ...filters, category: e.target.value })}>
             <option value="">All categories</option>
-            {categories.map((category) => <option key={category} value={category}>{category}</option>)}
+            <option value="pothole">Pothole</option>
+            <option value="flooding">Flooding</option>
+            <option value="garbage">Garbage</option>
+            <option value="streetlight">Streetlight</option>
+            <option value="water leak">Water leak</option>
           </select>
           <input className={inputClass} placeholder="Filter by location" value={filters.location} onChange={(e) => setFilters({ ...filters, location: e.target.value })} />
         </div>
