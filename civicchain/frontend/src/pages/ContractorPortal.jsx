@@ -2,10 +2,11 @@ import { useEffect, useMemo, useState } from "react";
 import { Route, Routes, useParams } from "react-router-dom";
 import { WalletMultiButton } from "@solana/wallet-adapter-react-ui";
 import { useWallet } from "@solana/wallet-adapter-react";
-import { BriefcaseBusiness, CheckCircle2, Clock3, LayoutDashboard, Upload } from "lucide-react";
+import { BriefcaseBusiness, CheckCircle2, Clock3, LayoutDashboard, Settings, Upload } from "lucide-react";
 import ComplaintCard from "../components/ComplaintCard";
 import PortalNav from "../components/PortalNav";
 import SessionBanner from "../components/SessionBanner";
+import ProfileSettings from "../components/ProfileSettings";
 import { Card, EmptyState, ErrorState, Field, LoadingState, inputClass } from "../components/ui";
 import { placeBid, submitProof } from "../services/api";
 import { getSession } from "../services/auth";
@@ -15,6 +16,7 @@ const links = [
   { to: "/contractor", label: "Dashboard", icon: LayoutDashboard },
   { to: "/contractor/bids", label: "Active Bids", icon: BriefcaseBusiness },
   { to: "/contractor/proof", label: "Upload Proof", icon: Upload },
+  { to: "/contractor/profile", label: "Profile", icon: Settings },
 ];
 
 export default function ContractorPortal() {
@@ -29,6 +31,7 @@ export default function ContractorPortal() {
         <Route index element={<Dashboard />} />
         <Route path="bids" element={<ActiveBids />} />
         <Route path="proof" element={<ProofUpload />} />
+        <Route path="profile" element={<ProfileSettings role="contractor" />} />
         <Route path="complaints/:id" element={<ContractorDetail />} />
       </Routes>
     </div>

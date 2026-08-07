@@ -14,6 +14,7 @@ export function StatusBadge({ status }) {
     Assigned: "border-amber-300/40 bg-amber-300/10 text-amber-200",
     Completed: "border-blue-300/40 bg-blue-300/10 text-blue-200",
     Verified: "border-success/40 bg-success/10 text-success",
+    Disputed: "border-danger/50 bg-danger/15 text-danger",
     Failed: "border-danger/40 bg-danger/10 text-danger",
   };
   return (

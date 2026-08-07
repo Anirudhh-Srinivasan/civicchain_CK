@@ -9,6 +9,7 @@ const colors = {
   Assigned: "#FBBF24",
   Completed: "#60A5FA",
   Verified: "#00FF88",
+  Disputed: "#FF4444",
   Failed: "#FF4444",
 };
 

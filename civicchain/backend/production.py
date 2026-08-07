@@ -66,8 +66,12 @@ def reset_data(x_admin_token: str | None = Header(None)) -> dict[str, int | bool
     webhook.init_db()
     with webhook.get_db() as conn:
         before = conn.execute("SELECT COUNT(*) FROM complaints").fetchone()[0]
+        conn.execute("DELETE FROM contractor_ratings")
+        conn.execute("DELETE FROM users")
         conn.execute("DELETE FROM complaints")
-        conn.execute("DELETE FROM sqlite_sequence WHERE name = 'complaints'")
+        conn.execute(
+            "DELETE FROM sqlite_sequence WHERE name IN ('complaints', 'contractor_ratings')"
+        )
 
     shutil.rmtree(webhook.UPLOAD_ROOT, ignore_errors=True)
     webhook.UPLOAD_ROOT.mkdir(parents=True, exist_ok=True)

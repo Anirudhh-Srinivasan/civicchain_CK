@@ -1,14 +1,15 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, Route, Routes, useParams } from "react-router-dom";
 import { WalletMultiButton } from "@solana/wallet-adapter-react-ui";
-import { useWallet } from "@solana/wallet-adapter-react";
-import { Camera, Clock3, FileText, Home, Map, MapPin, Send } from "lucide-react";
+import { AlertTriangle, Camera, Clock3, FileText, Home, Map, MapPin, Send } from "lucide-react";
 import ComplaintCard from "../components/ComplaintCard";
 import ComplaintMap from "../components/ComplaintMap";
 import PortalNav from "../components/PortalNav";
 import SessionBanner from "../components/SessionBanner";
+import ContractorRating, { Reputation } from "../components/ContractorRating";
+import UserIdentity from "../components/UserIdentity";
 import { Card, EmptyState, ErrorState, Field, LoadingState, StatusBadge, inputClass } from "../components/ui";
-import { createComplaint, getComplaint, getComplaints } from "../services/api";
+import { createComplaint, getComplaint, getComplaints, reportProblem } from "../services/api";
 import { getSession, isDemoMode } from "../services/auth";
 import { geocodeAddress } from "../services/geo";
 
@@ -37,7 +38,6 @@ export default function CitizenPortal() {
 }
 
 function CitizenHome() {
-  const { publicKey } = useWallet();
   const session = getSession();
   const [form, setForm] = useState({ title: "", description: "", location: "", category: "pothole" });
   const [bidMinutes, setBidMinutes] = useState("30");
@@ -56,7 +56,7 @@ function CitizenHome() {
         ...(coordinates
           ? { latitude: coordinates.latitude, longitude: coordinates.longitude }
           : {}),
-        citizen_pubkey: publicKey?.toBase58() || session?.id || null,
+        citizen_pubkey: session?.id || null,
         bid_deadline: bidDeadline,
         photo: photoFile,
       });
@@ -145,10 +145,9 @@ function CitizenHome() {
 }
 
 function CitizenComplaints() {
-  const { publicKey } = useWallet();
   const session = getSession();
   const { data, loading, error } = useComplaints();
-  const wallet = publicKey?.toBase58() || session?.id;
+  const wallet = session?.id;
   const visible = useMemo(() => {
     if (!wallet) return data;
     const owned = data.filter((item) => !item.citizen_pubkey || item.citizen_pubkey === wallet);
@@ -171,10 +170,71 @@ function CitizenMap() {
 
 function CitizenDetail() {
   const { id } = useParams();
-  const { complaint, loading, error } = useComplaint(id);
+  const { complaint, loading, error, refresh } = useComplaint(id);
+  const session = getSession();
+  const [reason, setReason] = useState("");
+  const [disputeState, setDisputeState] = useState({ loading: false, error: "" });
   if (loading) return <LoadingState />;
   if (error) return <ErrorState message={error} />;
-  return <DetailView complaint={complaint} back="/citizen/my-complaints" />;
+  const ownsComplaint = complaint.citizen_pubkey === session?.id;
+  const canReview = ownsComplaint && ["Completed", "Verified"].includes(complaint.status);
+  const canDispute = canReview && !complaint.payment_released && complaint.review_deadline
+    && Date.now() < new Date(complaint.review_deadline).getTime();
+
+  const submitDispute = async (event) => {
+    event.preventDefault();
+    setDisputeState({ loading: true, error: "" });
+    try {
+      await reportProblem(complaint.id, { citizen_id: session.id, reason });
+      setReason("");
+      setDisputeState({ loading: false, error: "" });
+      await refresh();
+    } catch (submitError) {
+      setDisputeState({ loading: false, error: submitError.message });
+    }
+  };
+
+  return (
+    <div className="space-y-6">
+      <DetailView complaint={complaint} back="/citizen/my-complaints" />
+      {canReview && (
+        <Card className="p-6">
+          <h2 className="text-xl font-black">Rate the Contractor</h2>
+          <p className="mt-2 text-sm text-slate-400">One rating is allowed for this completed job.</p>
+          <div className="mt-5">
+            <ContractorRating complaint={complaint} citizenId={session.id} onSaved={refresh} />
+          </div>
+        </Card>
+      )}
+      {canDispute && (
+        <Card className="border-danger/30 p-6">
+          <div className="flex items-center gap-2">
+            <AlertTriangle className="h-5 w-5 text-danger" />
+            <h2 className="text-xl font-black">Report a Problem</h2>
+          </div>
+          <p className="mt-2 text-sm text-slate-400">
+            Report unsatisfactory work before {formatDateTime(complaint.review_deadline)}. This blocks payment for Government review.
+          </p>
+          <form className="mt-4 space-y-4" onSubmit={submitDispute}>
+            <Field label="What is still wrong?">
+              <textarea className={inputClass} required maxLength="500" rows="4" value={reason} onChange={(event) => setReason(event.target.value)} />
+            </Field>
+            {disputeState.error && <p className="text-sm font-bold text-danger">{disputeState.error}</p>}
+            <button className="rounded-lg bg-danger px-5 py-3 font-black text-white disabled:opacity-60" disabled={disputeState.loading}>
+              {disputeState.loading ? "Reporting..." : "Report a Problem"}
+            </button>
+          </form>
+        </Card>
+      )}
+      {complaint.status === "Disputed" && (
+        <Card className="border-danger/40 bg-danger/10 p-6">
+          <h2 className="text-xl font-black text-danger">Problem reported</h2>
+          <p className="mt-2 text-slate-300">{complaint.dispute_reason}</p>
+          <p className="mt-2 text-sm text-slate-500">Payment is blocked pending Government review.</p>
+        </Card>
+      )}
+    </div>
+  );
 }
 
 export function DetailView({ complaint, back }) {
@@ -197,7 +257,9 @@ export function DetailView({ complaint, back }) {
           <h2 className="text-xl font-black">Contractor Bids</h2>
           <p className="mt-3 text-3xl font-black text-success">{complaint.lowest_bid ? `${complaint.lowest_bid.amount.toFixed(2)} SOL` : "No bid yet"}</p>
           <p className="mt-2 text-sm text-slate-400">
-            {complaint.contractor_pubkey || `${complaint.bid_count || 0} bid${complaint.bid_count === 1 ? "" : "s"} received`}
+            {complaint.contractor_pubkey
+              ? <><UserIdentity identity={complaint.contractor} walletAddress={complaint.contractor_pubkey} /> · <Reputation identity={complaint.contractor} /></>
+              : `${complaint.bid_count || 0} bid${complaint.bid_count === 1 ? "" : "s"} received`}
           </p>
           <p className="mt-2 text-xs font-bold uppercase tracking-widest text-cyan">
             Bid window {complaint.bidding_closed ? "closed" : "open"}{complaint.bid_deadline ? ` until ${formatDateTime(complaint.bid_deadline)}` : ""}
@@ -222,8 +284,14 @@ function BidList({ bids }) {
     <div className="mt-4 space-y-2">
       {[...bids].sort((a, b) => a.amount - b.amount).map((bid, index) => (
         <div key={`${bid.contractor_pubkey}-${bid.created_at || index}`} className="flex items-center justify-between gap-3 rounded-lg border border-white/10 bg-white/[0.03] p-3 text-sm">
-          <span className="truncate text-slate-300">{bid.contractor_pubkey}</span>
-          <span className="font-black text-success">{bid.amount.toFixed(2)} SOL</span>
+          <span className="min-w-0">
+            <span className="flex items-center gap-2">
+              <UserIdentity className="block truncate text-slate-300" identity={bid.contractor} walletAddress={bid.contractor_pubkey} />
+              {index === 0 && <span className="rounded-full bg-success/15 px-2 py-0.5 text-[10px] font-black uppercase text-success">Lowest</span>}
+            </span>
+            <Reputation identity={bid.contractor} />
+          </span>
+          <span className="shrink-0 font-black text-success">{bid.amount.toFixed(2)} SOL</span>
         </div>
       ))}
     </div>
@@ -271,14 +339,19 @@ export function useComplaints() {
 
 export function useComplaint(id) {
   const [state, setState] = useState({ complaint: null, loading: true, error: "" });
+  const refresh = useCallback(() => getComplaint(id)
+    .then((complaint) => {
+      setState({ complaint, loading: false, error: "" });
+      return complaint;
+    })
+    .catch((error) => {
+      setState({ complaint: null, loading: false, error: error.message });
+      return null;
+    }), [id]);
   useEffect(() => {
-    const refresh = () => getComplaint(id)
-      .then((complaint) => setState({ complaint, loading: false, error: "" }))
-      .catch((error) => setState({ complaint: null, loading: false, error: error.message }));
     refresh();
     const timer = window.setInterval(refresh, 3000);
     return () => window.clearInterval(timer);
-  }, [id]);
-  return state;
+  }, [refresh]);
+  return { ...state, refresh };
 }
-

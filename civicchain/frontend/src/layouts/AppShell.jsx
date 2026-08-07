@@ -1,6 +1,7 @@
+import { useEffect, useState } from "react";
 import { NavLink, Outlet, useNavigate } from "react-router-dom";
 import { Building2, Clock3, HardHat, Landmark, LogOut, ShieldCheck } from "lucide-react";
-import { clearSession, getSession, roles } from "../services/auth";
+import { clearSession, getSession, roles, sessionDisplayName } from "../services/auth";
 
 const portals = [
   { to: "/citizen", label: "Citizen", icon: Building2 },
@@ -10,7 +11,12 @@ const portals = [
 
 export default function AppShell() {
   const navigate = useNavigate();
-  const session = getSession();
+  const [session, setSession] = useState(getSession);
+  useEffect(() => {
+    const refreshSession = () => setSession(getSession());
+    window.addEventListener("civicchain:session-updated", refreshSession);
+    return () => window.removeEventListener("civicchain:session-updated", refreshSession);
+  }, []);
   const visiblePortals = session ? portals.filter((portal) => portal.to === `/${session.role}`) : portals;
   const roleLabel = session ? roles[session.role].label : "";
   const expiresAt = session
@@ -38,8 +44,8 @@ export default function AppShell() {
             {session && (
               <div className="flex flex-wrap items-center gap-2 text-sm">
                 <span className="rounded-lg border border-cyan/30 bg-cyan/10 px-3 py-2 font-black text-cyan">{roleLabel}</span>
-                <span className="max-w-[18rem] truncate rounded-lg border border-white/10 bg-white/[0.04] px-3 py-2 font-bold text-slate-200">
-                  {session.id}
+                <span title={session.id} className="max-w-[18rem] truncate rounded-lg border border-white/10 bg-white/[0.04] px-3 py-2 font-bold text-slate-200">
+                  {sessionDisplayName(session)}
                 </span>
                 <span className="inline-flex items-center gap-2 rounded-lg border border-white/10 bg-white/[0.04] px-3 py-2 text-slate-400">
                   <Clock3 className="h-4 w-4" />
