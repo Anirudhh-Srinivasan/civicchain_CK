@@ -5,11 +5,12 @@ import base58
 import hashlib
 import json
 import os
+import re
 import sqlite3
 import struct
 import sys
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -42,6 +43,21 @@ UPLOAD_ROOT = Path(os.getenv("CIVICCHAIN_UPLOAD_ROOT", str(DB_PATH.parent / "upl
 PAYMENT_RELEASE_CONFIDENCE_THRESHOLD = float(
     os.getenv("PAYMENT_RELEASE_CONFIDENCE_THRESHOLD", "0.85")
 )
+PAYMENT_REVIEW_WINDOW_HOURS = float(os.getenv("PAYMENT_REVIEW_WINDOW_HOURS", "24"))
+USERNAME_MIN_LENGTH = 3
+USERNAME_MAX_LENGTH = 24
+REVIEW_MAX_LENGTH = 500
+DISPUTE_REASON_MAX_LENGTH = 500
+USERNAME_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
+BLOCKED_USERNAME_TERMS = {
+    "admin",
+    "administrator",
+    "civicchain",
+    "government",
+    "moderator",
+    "null",
+    "support",
+}
 MAX_PROOF_IMAGE_BYTES = int(os.getenv("MAX_PROOF_IMAGE_BYTES", str(8 * 1024 * 1024)))
 MIN_PROOF_IMAGE_WIDTH = int(os.getenv("MIN_PROOF_IMAGE_WIDTH", "160"))
 MIN_PROOF_IMAGE_HEIGHT = int(os.getenv("MIN_PROOF_IMAGE_HEIGHT", "160"))
@@ -110,6 +126,32 @@ class ProofRequest(BaseModel):
     after_image_name: str | None = None
     proof_text: str | None = None
     proof_hash: str | None = None
+
+
+class UsernameRequest(BaseModel):
+    wallet_address: str
+    username: str
+    role: str
+
+
+class RatingRequest(BaseModel):
+    citizen_id: str
+    rating: int
+    review: str | None = None
+
+
+class DisputeRequest(BaseModel):
+    citizen_id: str
+    reason: str
+
+
+class ReleasePaymentRequest(BaseModel):
+    government_pubkey: str | None = None
+
+
+class ResolveDisputeRequest(BaseModel):
+    government_pubkey: str
+    resolution: str
 
 
 def get_db() -> sqlite3.Connection:
@@ -188,6 +230,11 @@ def init_db() -> None:
                 before_image_path TEXT,
                 after_image_path TEXT,
                 payment_released INTEGER DEFAULT 0,
+                review_deadline TEXT,
+                dispute_reason TEXT,
+                disputed_by TEXT,
+                disputed_at TEXT,
+                pre_dispute_status TEXT,
                 signature TEXT,
                 slot INTEGER,
                 raw_transaction TEXT,
@@ -218,12 +265,46 @@ def init_db() -> None:
             "before_image_path": "ALTER TABLE complaints ADD COLUMN before_image_path TEXT",
             "after_image_path": "ALTER TABLE complaints ADD COLUMN after_image_path TEXT",
             "payment_released": "ALTER TABLE complaints ADD COLUMN payment_released INTEGER DEFAULT 0",
+            "review_deadline": "ALTER TABLE complaints ADD COLUMN review_deadline TEXT",
+            "dispute_reason": "ALTER TABLE complaints ADD COLUMN dispute_reason TEXT",
+            "disputed_by": "ALTER TABLE complaints ADD COLUMN disputed_by TEXT",
+            "disputed_at": "ALTER TABLE complaints ADD COLUMN disputed_at TEXT",
+            "pre_dispute_status": "ALTER TABLE complaints ADD COLUMN pre_dispute_status TEXT",
         }
         for column, statement in migrations.items():
             if column not in existing_columns:
                 conn.execute(statement)
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_complaints_pubkey ON complaints(complaint_pubkey)"
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS users (
+                wallet_address TEXT PRIMARY KEY,
+                username TEXT NOT NULL COLLATE NOCASE UNIQUE,
+                role TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS contractor_ratings (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                complaint_id INTEGER NOT NULL,
+                citizen_id TEXT NOT NULL,
+                contractor_pubkey TEXT NOT NULL,
+                rating INTEGER NOT NULL CHECK (rating BETWEEN 1 AND 5),
+                review TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE (complaint_id, citizen_id),
+                FOREIGN KEY (complaint_id) REFERENCES complaints(id)
+            )
+            """
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_ratings_contractor ON contractor_ratings(contractor_pubkey)"
         )
 
 
@@ -313,9 +394,91 @@ def assign_expired_lowest_bids(
         )
 
 
+def contractor_reputation(conn: sqlite3.Connection, wallet_address: str | None) -> dict[str, Any]:
+    if not wallet_address:
+        return {"average_rating": None, "ratings_count": 0}
+    row = conn.execute(
+        """
+        SELECT AVG(rating) AS average_rating, COUNT(*) AS ratings_count
+        FROM contractor_ratings
+        WHERE contractor_pubkey = ?
+        """,
+        (wallet_address,),
+    ).fetchone()
+    average = row["average_rating"] if row else None
+    return {
+        "average_rating": round(float(average), 1) if average is not None else None,
+        "ratings_count": int(row["ratings_count"]) if row else 0,
+    }
+
+
+def identity_for_wallet(conn: sqlite3.Connection, wallet_address: str | None) -> dict[str, Any]:
+    if not wallet_address:
+        return {
+            "wallet_address": wallet_address,
+            "username": None,
+            "average_rating": None,
+            "ratings_count": 0,
+        }
+    user = conn.execute(
+        "SELECT wallet_address, username, role FROM users WHERE wallet_address = ?",
+        (wallet_address,),
+    ).fetchone()
+    return {
+        "wallet_address": wallet_address,
+        "username": user["username"] if user else None,
+        "role": user["role"] if user else None,
+        **contractor_reputation(conn, wallet_address),
+    }
+
+
+def parse_timestamp(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return parsed.replace(tzinfo=timezone.utc) if parsed.tzinfo is None else parsed
+
+
+def payout_eligibility(row: sqlite3.Row) -> tuple[bool, str]:
+    if row["payment_released"]:
+        return False, "Payment has already been released"
+    if row["status"] == "Disputed":
+        return False, "Payment is blocked while the complaint is disputed"
+    if row["verification_status"] != "approved":
+        return False, "Work must be approved before payment is eligible"
+    deadline = parse_timestamp(row["review_deadline"])
+    if deadline is None:
+        return False, "The citizen review window has not started"
+    if datetime.now(timezone.utc) < deadline:
+        return False, "The citizen review window is still open"
+    return True, "Eligible for payout"
+
+
 def row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
     bids = parse_bids(row["bids_json"])
     best_bid = lowest_bid(bids)
+    with get_db() as identity_conn:
+        enriched_bids = []
+        for bid in bids:
+            identity = identity_for_wallet(identity_conn, bid.get("contractor_pubkey"))
+            enriched_bids.append({**bid, "contractor": identity})
+        enriched_best = None
+        if best_bid:
+            enriched_best = {
+                **best_bid,
+                "contractor": identity_for_wallet(
+                    identity_conn, best_bid.get("contractor_pubkey")
+                ),
+            }
+        contractor = identity_for_wallet(identity_conn, row["contractor_pubkey"])
+        rating = identity_conn.execute(
+            "SELECT rating, review, created_at FROM contractor_ratings WHERE complaint_id = ?",
+            (row["id"],),
+        ).fetchone()
+    payout_eligible, payout_status = payout_eligibility(row)
     return {
         "id": row["id"],
         "complaint_pubkey": row["complaint_pubkey"],
@@ -330,12 +493,13 @@ def row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
         "longitude": row["longitude"],
         "estimated_fund": row["estimated_fund"],
         "bid_deadline": row["bid_deadline"],
-        "bids": bids,
-        "bid_count": len(bids),
-        "lowest_bid": best_bid,
+        "bids": enriched_bids,
+        "bid_count": len(enriched_bids),
+        "lowest_bid": enriched_best,
         "bidding_closed": is_bid_window_closed(row["bid_deadline"]),
         "bid_amount": row["bid_amount"],
         "contractor_pubkey": row["contractor_pubkey"],
+        "contractor": contractor,
         "ai_confidence": row["ai_confidence"],
         "ai_reasoning": row["ai_reasoning"],
         "ai_source": row["ai_source"],
@@ -345,6 +509,13 @@ def row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
         "before_image_path": row["before_image_path"],
         "after_image_path": row["after_image_path"],
         "payment_released": bool(row["payment_released"]),
+        "review_deadline": row["review_deadline"],
+        "payout_eligible": payout_eligible,
+        "payout_status": payout_status,
+        "dispute_reason": row["dispute_reason"],
+        "disputed_by": row["disputed_by"],
+        "disputed_at": row["disputed_at"],
+        "rating": dict(rating) if rating else None,
         "signature": row["signature"],
         "slot": row["slot"],
         "created_at": row["created_at"],
@@ -355,6 +526,39 @@ def require_text(value: str | None, field: str) -> str:
     if value is None or not value.strip():
         raise HTTPException(status_code=400, detail=f"{field} is required")
     return value.strip()
+
+
+def validate_username(value: str) -> str:
+    username = value.strip()
+    if not USERNAME_MIN_LENGTH <= len(username) <= USERNAME_MAX_LENGTH:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Username must be {USERNAME_MIN_LENGTH}-{USERNAME_MAX_LENGTH} characters long",
+        )
+    if not USERNAME_PATTERN.fullmatch(username):
+        raise HTTPException(
+            status_code=400,
+            detail="Username may contain only letters, numbers, underscores, and hyphens",
+        )
+    lowered = username.casefold()
+    if lowered in BLOCKED_USERNAME_TERMS or any(
+        term in lowered for term in {"fuck", "shit", "bitch", "nazi"}
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail="That username is not allowed. Please try another",
+        )
+    return username
+
+
+def validate_profile_role(role: str) -> str:
+    normalized = role.strip().lower()
+    if normalized not in {"contractor", "government"}:
+        raise HTTPException(
+            status_code=400,
+            detail="Username profiles are currently available only for Contractor and Government",
+        )
+    return normalized
 
 
 def valid_solana_pubkey(value: str | None) -> bool:
@@ -768,7 +972,50 @@ def get_public_config() -> dict[str, Any]:
     return {
         "government_wallet": government_wallet,
         "program_id": PROGRAM_ID,
+        "payment_review_window_hours": PAYMENT_REVIEW_WINDOW_HOURS,
     }
+
+
+@app.get("/users/{wallet_address}")
+def get_user_profile(wallet_address: str) -> dict[str, Any]:
+    init_db()
+    if not valid_solana_pubkey(wallet_address):
+        raise HTTPException(status_code=400, detail="Invalid Solana wallet address")
+    with get_db() as conn:
+        profile = identity_for_wallet(conn, wallet_address)
+    if not profile["username"]:
+        raise HTTPException(status_code=404, detail="No username exists for this wallet")
+    return profile
+
+
+@app.put("/users/{wallet_address}/username")
+def save_username(wallet_address: str, request: UsernameRequest) -> dict[str, Any]:
+    init_db()
+    if request.wallet_address != wallet_address:
+        raise HTTPException(status_code=400, detail="Wallet address does not match the request")
+    if not valid_solana_pubkey(wallet_address):
+        raise HTTPException(status_code=400, detail="Invalid Solana wallet address")
+    username = validate_username(request.username)
+    role = validate_profile_role(request.role)
+    with get_db() as conn:
+        try:
+            conn.execute(
+                """
+                INSERT INTO users (wallet_address, username, role)
+                VALUES (?, ?, ?)
+                ON CONFLICT(wallet_address) DO UPDATE SET
+                    username = excluded.username,
+                    role = excluded.role,
+                    updated_at = CURRENT_TIMESTAMP
+                """,
+                (wallet_address, username, role),
+            )
+        except sqlite3.IntegrityError as exc:
+            raise HTTPException(
+                status_code=409,
+                detail="That username is already taken. Please try another",
+            ) from exc
+        return identity_for_wallet(conn, wallet_address)
 
 
 @app.post("/webhook")
@@ -869,39 +1116,19 @@ def verify_complaint(request: VerifyRequest) -> dict[str, Any]:
         and request.proof_hash
         and len(request.proof_hash.strip()) >= 16
     )
-    should_release = should_attempt_release(request, ai_result)
     payment_signature = None
     payment_error = None
 
-    if should_release:
-        try:
-            release_payment = load_release_payment()
-            payment_signature = release_payment(
-                complaint_pubkey=request.complaint_pubkey or "",
-                bid_pubkey=request.bid_pubkey or "",
-                escrow_pubkey=request.escrow_pubkey or "",
-                contractor_pubkey=request.contractor_pubkey or "",
-                ai_confidence=int(ai_result.get("confidence_score") or confidence_value(ai_result) * 100),
-                proof_hash=request.proof_hash or "",
-            )
-        except Exception as exc:
-            payment_error = str(exc)
-            should_release = False
-
-    if payment_signature is None and should_attempt_direct_payout(row, ai_result, request):
-        try:
-            send_direct_payout = load_direct_payout()
-            payment_signature = send_direct_payout(
-                contractor_pubkey=row["contractor_pubkey"],
-                amount_sol=float(row["bid_amount"]),
-            )
-        except Exception as exc:
-            payment_error = payment_error or str(exc)
-
     updated_complaint = None
     if row is not None:
-        next_status = "Verified" if ai_result.get("approved") else "Completed"
-        payment_released = bool(payment_signature or row["payment_released"])
+        next_status = "Completed"
+        payment_released = bool(row["payment_released"])
+        review_deadline = None
+        if is_trusted_ai_approval(ai_result):
+            review_deadline = (
+                datetime.now(timezone.utc)
+                + timedelta(hours=PAYMENT_REVIEW_WINDOW_HOURS)
+            ).replace(microsecond=0).isoformat()
         with get_db() as conn:
             conn.execute(
                 """
@@ -915,7 +1142,12 @@ def verify_complaint(request: VerifyRequest) -> dict[str, Any]:
                     proof_hash = ?,
                     before_image_path = ?,
                     after_image_path = ?,
-                    payment_released = ?
+                    payment_released = ?,
+                    review_deadline = ?,
+                    dispute_reason = NULL,
+                    disputed_by = NULL,
+                    disputed_at = NULL,
+                    pre_dispute_status = NULL
                 WHERE id = ?
                 """,
                 (
@@ -928,6 +1160,7 @@ def verify_complaint(request: VerifyRequest) -> dict[str, Any]:
                     before_image_path,
                     after_image_path,
                     1 if payment_released else 0,
+                    review_deadline,
                     row["id"],
                 ),
             )
@@ -954,6 +1187,7 @@ def verify_complaint(request: VerifyRequest) -> dict[str, Any]:
         "payment_released": payment_released_response,
         "payment_signature": payment_signature,
         "payment_error": payment_error,
+        "review_window_hours": PAYMENT_REVIEW_WINDOW_HOURS,
         "complaint": updated_complaint,
     }
 
@@ -1269,3 +1503,251 @@ def submit_proof(complaint_id: int, request: ProofRequest) -> dict[str, Any]:
 
     return row_to_dict(updated)
 
+
+@app.post("/complaints/{complaint_id}/rating")
+def rate_contractor(complaint_id: int, request: RatingRequest) -> dict[str, Any]:
+    init_db()
+    citizen_id = require_text(request.citizen_id, "citizen_id")
+    if request.rating < 1 or request.rating > 5:
+        raise HTTPException(status_code=400, detail="Rating must be between 1 and 5")
+    review = optional_text(request.review)
+    if review and len(review) > REVIEW_MAX_LENGTH:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Review must be {REVIEW_MAX_LENGTH} characters or fewer",
+        )
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT * FROM complaints WHERE id = ?",
+            (complaint_id,),
+        ).fetchone()
+        if row is None:
+            raise HTTPException(status_code=404, detail="Complaint not found")
+        if row["citizen_pubkey"] != citizen_id:
+            raise HTTPException(
+                status_code=403,
+                detail="Only the citizen who filed this complaint can rate the contractor",
+            )
+        if row["status"] not in {"Completed", "Verified"}:
+            raise HTTPException(
+                status_code=400,
+                detail="The contractor can be rated only after the job is completed",
+            )
+        if not row["contractor_pubkey"]:
+            raise HTTPException(status_code=400, detail="No contractor is assigned to this job")
+        try:
+            conn.execute(
+                """
+                INSERT INTO contractor_ratings (
+                    complaint_id, citizen_id, contractor_pubkey, rating, review
+                )
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (
+                    complaint_id,
+                    citizen_id,
+                    row["contractor_pubkey"],
+                    request.rating,
+                    review,
+                ),
+            )
+        except sqlite3.IntegrityError as exc:
+            raise HTTPException(
+                status_code=409,
+                detail="You have already rated the contractor for this job",
+            ) from exc
+        updated = conn.execute(
+            "SELECT * FROM complaints WHERE id = ?",
+            (complaint_id,),
+        ).fetchone()
+    return row_to_dict(updated)
+
+
+@app.post("/complaints/{complaint_id}/dispute")
+def dispute_complaint(complaint_id: int, request: DisputeRequest) -> dict[str, Any]:
+    init_db()
+    citizen_id = require_text(request.citizen_id, "citizen_id")
+    reason = require_text(request.reason, "reason")
+    if len(reason) > DISPUTE_REASON_MAX_LENGTH:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Reason must be {DISPUTE_REASON_MAX_LENGTH} characters or fewer",
+        )
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT * FROM complaints WHERE id = ?",
+            (complaint_id,),
+        ).fetchone()
+        if row is None:
+            raise HTTPException(status_code=404, detail="Complaint not found")
+        if row["citizen_pubkey"] != citizen_id:
+            raise HTTPException(
+                status_code=403,
+                detail="Only the citizen who filed this complaint can report a problem",
+            )
+        if row["status"] == "Disputed":
+            raise HTTPException(status_code=409, detail="This complaint is already disputed")
+        if row["status"] not in {"Completed", "Verified"}:
+            raise HTTPException(
+                status_code=400,
+                detail="A problem can be reported only after completed work",
+            )
+        if row["payment_released"]:
+            raise HTTPException(
+                status_code=409,
+                detail="Payment has already been released and can no longer be blocked",
+            )
+        deadline = parse_timestamp(row["review_deadline"])
+        if deadline is None or datetime.now(timezone.utc) >= deadline:
+            raise HTTPException(
+                status_code=409,
+                detail="The citizen review window has closed",
+            )
+        conn.execute(
+            """
+            UPDATE complaints
+            SET status = 'Disputed',
+                dispute_reason = ?,
+                disputed_by = ?,
+                disputed_at = CURRENT_TIMESTAMP,
+                pre_dispute_status = ?
+            WHERE id = ?
+            """,
+            (reason, citizen_id, row["status"], complaint_id),
+        )
+        updated = conn.execute(
+            "SELECT * FROM complaints WHERE id = ?",
+            (complaint_id,),
+        ).fetchone()
+    return row_to_dict(updated)
+
+
+@app.post("/complaints/{complaint_id}/resolve-dispute")
+def resolve_dispute(
+    complaint_id: int, request: ResolveDisputeRequest
+) -> dict[str, Any]:
+    init_db()
+    try:
+        from backend.payout import government_wallet_address
+    except ImportError as exc:
+        raise HTTPException(status_code=500, detail="Payout backend unavailable") from exc
+    authorized_wallet = government_wallet_address()
+    if not authorized_wallet:
+        raise HTTPException(status_code=503, detail="Government payout wallet is not configured")
+    if request.government_pubkey != authorized_wallet:
+        raise HTTPException(status_code=403, detail="Government wallet is not authorized")
+    if request.resolution not in {"approve_payout", "return_for_remediation"}:
+        raise HTTPException(status_code=400, detail="Invalid dispute resolution")
+
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT * FROM complaints WHERE id = ?",
+            (complaint_id,),
+        ).fetchone()
+        if row is None:
+            raise HTTPException(status_code=404, detail="Complaint not found")
+        if row["status"] != "Disputed":
+            raise HTTPException(status_code=409, detail="This complaint is not disputed")
+        if request.resolution == "approve_payout":
+            conn.execute(
+                """
+                UPDATE complaints
+                SET status = 'Completed',
+                    review_deadline = ?
+                WHERE id = ?
+                """,
+                (
+                    (datetime.now(timezone.utc) - timedelta(seconds=1)).isoformat(),
+                    complaint_id,
+                ),
+            )
+        else:
+            conn.execute(
+                """
+                UPDATE complaints
+                SET status = 'Assigned',
+                    verification_status = NULL,
+                    verification_checked_at = NULL,
+                    ai_confidence = NULL,
+                    ai_reasoning = 'Government returned disputed work for remediation.',
+                    ai_source = NULL,
+                    review_deadline = NULL
+                WHERE id = ?
+                """,
+                (complaint_id,),
+            )
+        updated = conn.execute(
+            "SELECT * FROM complaints WHERE id = ?",
+            (complaint_id,),
+        ).fetchone()
+    return row_to_dict(updated)
+
+
+@app.post("/complaints/{complaint_id}/release-payment")
+def release_delayed_payment(
+    complaint_id: int, request: ReleasePaymentRequest
+) -> dict[str, Any]:
+    init_db()
+    try:
+        from backend.payout import government_wallet_address
+    except ImportError as exc:
+        raise HTTPException(status_code=500, detail="Payout backend unavailable") from exc
+    authorized_wallet = government_wallet_address()
+    if not authorized_wallet:
+        raise HTTPException(status_code=503, detail="Government payout wallet is not configured")
+    if request.government_pubkey != authorized_wallet:
+        raise HTTPException(status_code=403, detail="Government wallet is not authorized")
+
+    with get_db() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        row = conn.execute(
+            "SELECT * FROM complaints WHERE id = ?",
+            (complaint_id,),
+        ).fetchone()
+        if row is None:
+            raise HTTPException(status_code=404, detail="Complaint not found")
+        eligible, reason = payout_eligibility(row)
+        if not eligible:
+            raise HTTPException(status_code=409, detail=reason)
+        contractor_pubkey = row["contractor_pubkey"]
+        bid_amount = row["bid_amount"]
+        if not contractor_pubkey or not valid_solana_pubkey(contractor_pubkey):
+            raise HTTPException(status_code=400, detail="Assigned contractor wallet is invalid")
+        if not bid_amount or float(bid_amount) <= 0:
+            raise HTTPException(status_code=400, detail="Accepted bid amount is invalid")
+        conn.execute(
+            "UPDATE complaints SET status = 'PaymentProcessing' WHERE id = ?",
+            (complaint_id,),
+        )
+
+    try:
+        send_direct_payout = load_direct_payout()
+        payment_signature = send_direct_payout(contractor_pubkey, float(bid_amount))
+    except Exception as exc:
+        with get_db() as conn:
+            conn.execute(
+                """
+                UPDATE complaints
+                SET status = 'Completed'
+                WHERE id = ? AND status = 'PaymentProcessing' AND payment_released = 0
+                """,
+                (complaint_id,),
+            )
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    with get_db() as conn:
+        conn.execute(
+            """
+            UPDATE complaints
+            SET payment_released = 1,
+                status = 'Verified',
+                signature = COALESCE(signature, ?)
+            WHERE id = ? AND payment_released = 0 AND status = 'PaymentProcessing'
+            """,
+            (payment_signature, complaint_id),
+        )
+        updated = conn.execute(
+            "SELECT * FROM complaints WHERE id = ?",
+            (complaint_id,),
+        ).fetchone()
+    return row_to_dict(updated)

@@ -4,7 +4,7 @@ import json
 import os
 import sqlite3
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 
@@ -24,6 +24,7 @@ def database_path() -> Path:
 
 
 DB_PATH = database_path()
+PAYMENT_REVIEW_WINDOW_HOURS = float(os.getenv("PAYMENT_REVIEW_WINDOW_HOURS", "24"))
 
 
 
@@ -73,6 +74,11 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
             before_image_path TEXT,
             after_image_path TEXT,
             payment_released INTEGER DEFAULT 0,
+            review_deadline TEXT,
+            dispute_reason TEXT,
+            disputed_by TEXT,
+            disputed_at TEXT,
+            pre_dispute_status TEXT,
             signature TEXT,
             slot INTEGER,
             raw_transaction TEXT,
@@ -99,10 +105,40 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
         "before_image_path": "ALTER TABLE complaints ADD COLUMN before_image_path TEXT",
         "after_image_path": "ALTER TABLE complaints ADD COLUMN after_image_path TEXT",
         "payment_released": "ALTER TABLE complaints ADD COLUMN payment_released INTEGER DEFAULT 0",
+        "review_deadline": "ALTER TABLE complaints ADD COLUMN review_deadline TEXT",
+        "dispute_reason": "ALTER TABLE complaints ADD COLUMN dispute_reason TEXT",
+        "disputed_by": "ALTER TABLE complaints ADD COLUMN disputed_by TEXT",
+        "disputed_at": "ALTER TABLE complaints ADD COLUMN disputed_at TEXT",
+        "pre_dispute_status": "ALTER TABLE complaints ADD COLUMN pre_dispute_status TEXT",
     }
     for column, statement in migrations.items():
         if column not in columns:
             conn.execute(statement)
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS users (
+            wallet_address TEXT PRIMARY KEY,
+            username TEXT NOT NULL COLLATE NOCASE UNIQUE,
+            role TEXT NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS contractor_ratings (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            complaint_id INTEGER NOT NULL,
+            citizen_id TEXT NOT NULL,
+            contractor_pubkey TEXT NOT NULL,
+            rating INTEGER NOT NULL CHECK (rating BETWEEN 1 AND 5),
+            review TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE (complaint_id, citizen_id)
+        )
+        """
+    )
 
 
 def main() -> None:
@@ -113,11 +149,15 @@ def main() -> None:
     with sqlite3.connect(DB_PATH) as conn:
         ensure_schema(conn)
 
+        conn.execute(
+            "DELETE FROM contractor_ratings WHERE complaint_id IN (SELECT id FROM complaints WHERE complaint_pubkey LIKE 'demo:%')"
+        )
         conn.execute("DELETE FROM complaints WHERE complaint_pubkey LIKE 'demo:%'")
+        conn.execute("DELETE FROM users WHERE wallet_address LIKE 'ContractorDemoWallet%'")
         for index, (status, category, title, description, location, fund) in enumerate(COMPLAINTS, start=1):
             verified = status == "Verified"
             has_bid = status in {"Assigned", "Completed", "Verified"}
-            conn.execute(
+            cursor = conn.execute(
                 """
                 INSERT INTO complaints (
                     complaint_pubkey, citizen_pubkey, title, description, location,
@@ -125,9 +165,9 @@ def main() -> None:
                     contractor_pubkey, ai_confidence, ai_reasoning, ai_source,
                     verification_status, verification_checked_at, proof_hash,
                     before_image_path, after_image_path, payment_released,
-                    signature, slot, raw_transaction
+                    review_deadline, signature, slot, raw_transaction
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     f"demo:{uuid.uuid4()}",
@@ -150,11 +190,35 @@ def main() -> None:
                     None,
                     None,
                     1 if verified else 0,
+                    (datetime.now(timezone.utc) + timedelta(hours=PAYMENT_REVIEW_WINDOW_HOURS)).isoformat()
+                    if status == "Completed" else None,
                     f"demo-signature-{index:02d}",
                     100000 + index,
                     json.dumps({"source": "seed_demo"}),
                 ),
             )
+            if has_bid:
+                contractor_wallet = f"ContractorDemoWallet{index:02d}"
+                conn.execute(
+                    "INSERT OR REPLACE INTO users (wallet_address, username, role) VALUES (?, ?, 'contractor')",
+                    (contractor_wallet, f"chennai_works_{index:02d}"),
+                )
+                if status in {"Completed", "Verified"}:
+                    conn.execute(
+                        """
+                        INSERT INTO contractor_ratings (
+                            complaint_id, citizen_id, contractor_pubkey, rating, review
+                        )
+                        VALUES (?, ?, ?, ?, ?)
+                        """,
+                        (
+                            cursor.lastrowid,
+                            f"CitizenDemoWallet{index:02d}",
+                            contractor_wallet,
+                            4 + (index % 2),
+                            "Demo citizen feedback for completed work.",
+                        ),
+                    )
     print(f"Seeded {len(COMPLAINTS)} demo complaints into {DB_PATH}")
 
 

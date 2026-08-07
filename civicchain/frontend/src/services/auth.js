@@ -128,12 +128,26 @@ export function saveSession(role, id, options = {}) {
   const session = {
     role,
     id: id.trim(),
+    username: options.username || null,
     signedInAt: now.toISOString(),
     expiresAt: new Date(now.getTime() + sessionDurationMs).toISOString(),
   };
   window.localStorage.setItem(sessionKey, JSON.stringify(session));
   recordLogin(session);
   return session;
+}
+
+export function updateSessionProfile(profile) {
+  const session = getSession();
+  if (!session || session.id !== profile?.wallet_address) return session;
+  const updated = { ...session, username: profile.username };
+  window.localStorage.setItem(sessionKey, JSON.stringify(updated));
+  window.dispatchEvent(new Event("civicchain:session-updated"));
+  return updated;
+}
+
+export function sessionDisplayName(session) {
+  return session?.username || session?.id || "";
 }
 
 export function clearSession() {
@@ -152,6 +166,7 @@ function recordLogin(session) {
   const entry = {
     role: session.role,
     id: session.id,
+    username: session.username,
     at: session.signedInAt,
   };
   const audit = [entry, ...getLoginAudit()].slice(0, 5);

@@ -15,6 +15,29 @@ export async function getPublicConfig() {
   return response.data;
 }
 
+export async function getUserProfile(walletAddress) {
+  try {
+    const response = await api.get(`/users/${walletAddress}`);
+    return response.data;
+  } catch (error) {
+    if (error?.response?.status === 404) return null;
+    throw new Error(apiMessage(error));
+  }
+}
+
+export async function saveUsername(walletAddress, username, role) {
+  try {
+    const response = await api.put(`/users/${walletAddress}/username`, {
+      wallet_address: walletAddress,
+      username,
+      role,
+    });
+    return response.data;
+  } catch (error) {
+    throw new Error(apiMessage(error));
+  }
+}
+
 const statusCycle = ["Open", "Assigned", "Completed", "Verified"];
 const categoryCycle = ["pothole", "flooding", "garbage", "streetlight", "water leak"];
 const localKey = "civicchain:complaints";
@@ -272,6 +295,67 @@ export async function acceptLowestBid(id, payload = {}) {
   }
 }
 
+export async function rateContractor(id, payload) {
+  try {
+    const { data } = await api.post(`/complaints/${id}/rating`, payload);
+    return normalizeComplaint(data);
+  } catch (error) {
+    if (!isNetworkError(error)) throw new Error(apiMessage(error));
+    return updateLocalComplaint(id, (item) => {
+      if (item.rating) throw new Error("You have already rated this contractor");
+      return {
+        ...item,
+        rating: {
+          rating: Number(payload.rating),
+          review: payload.review || null,
+          created_at: new Date().toISOString(),
+        },
+      };
+    });
+  }
+}
+
+export async function reportProblem(id, payload) {
+  try {
+    const { data } = await api.post(`/complaints/${id}/dispute`, payload);
+    return normalizeComplaint(data);
+  } catch (error) {
+    if (!isNetworkError(error)) throw new Error(apiMessage(error));
+    return updateLocalComplaint(id, (item) => ({
+      ...item,
+      status: "Disputed",
+      dispute_reason: payload.reason,
+      disputed_by: payload.citizen_id,
+      disputed_at: new Date().toISOString(),
+      payout_eligible: false,
+      payout_status: "Payment is blocked while the complaint is disputed",
+    }));
+  }
+}
+
+export async function releasePayment(id, governmentPubkey) {
+  try {
+    const { data } = await api.post(`/complaints/${id}/release-payment`, {
+      government_pubkey: governmentPubkey,
+    });
+    return normalizeComplaint(data);
+  } catch (error) {
+    throw new Error(apiMessage(error));
+  }
+}
+
+export async function resolveDispute(id, governmentPubkey, resolution) {
+  try {
+    const { data } = await api.post(`/complaints/${id}/resolve-dispute`, {
+      government_pubkey: governmentPubkey,
+      resolution,
+    });
+    return normalizeComplaint(data);
+  } catch (error) {
+    throw new Error(apiMessage(error));
+  }
+}
+
 export async function submitProof(id, payload) {
   try {
     const beforeFile = payload.before_image || payload.beforeImage || payload.before;
@@ -388,4 +472,3 @@ export function imageForCategory(category) {
   const encoded = encodeURIComponent(`Chennai civic ${category}`);
   return `https://source.unsplash.com/900x600/?${encoded}`;
 }
-

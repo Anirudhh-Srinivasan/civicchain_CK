@@ -24,7 +24,8 @@ import {
   validateLogin,
 } from "../services/auth";
 import { Card, Field, inputClass } from "../components/ui";
-import { getPublicConfig } from "../services/api";
+import UsernameSetup from "../components/UsernameSetup";
+import { getPublicConfig, getUserProfile } from "../services/api";
 
 
 const roleIcons = {
@@ -41,6 +42,7 @@ export default function LoginPage() {
   const [error, setError] = useState("");
   const [governmentWalletAddress, setGovernmentWalletAddress] = useState(null);
   const [governmentWalletLoaded, setGovernmentWalletLoaded] = useState(false);
+  const [pendingUsername, setPendingUsername] = useState(null);
   const selected = roles[role];
   const audit = getLoginAudit();
 
@@ -84,7 +86,13 @@ export default function LoginPage() {
     [],
   );
 
-  const submit = (event) => {
+  const finishWalletLogin = (profile) => {
+    const validationOptions = { governmentWalletAddress, governmentWalletLoaded, username: profile.username };
+    const session = saveSession(role, profile.wallet_address, validationOptions);
+    navigate(roles[session.role].path, { replace: true });
+  };
+
+  const submit = async (event) => {
     event.preventDefault();
     const loginId = role === "citizen"
       ? id
@@ -96,6 +104,15 @@ export default function LoginPage() {
       return;
     }
     try {
+      if (role !== "citizen") {
+        const profile = await getUserProfile(loginId);
+        if (!profile) {
+          setPendingUsername({ walletAddress: loginId, role });
+          return;
+        }
+        finishWalletLogin(profile);
+        return;
+      }
       const session = saveSession(role, loginId, validationOptions);
       navigate(roles[session.role].path, { replace: true });
     } catch (error) {
@@ -138,6 +155,18 @@ export default function LoginPage() {
           </div>
         </section>
 
+          {pendingUsername ? (
+            <div className="min-h-[640px]">
+              <UsernameSetup
+                walletAddress={pendingUsername.walletAddress}
+                role={pendingUsername.role}
+                onComplete={finishWalletLogin}
+              />
+              <button className="mt-3 text-sm font-bold text-slate-400 hover:text-white" onClick={() => setPendingUsername(null)}>
+                Back to login
+              </button>
+            </div>
+          ) : (
           <Card className="min-h-[640px] p-4 lg:p-5">
             <form className="space-y-3" onSubmit={submit}>
               <div>
@@ -244,6 +273,7 @@ export default function LoginPage() {
               </button>
             </form>
           </Card>
+          )}
 
           <aside className="space-y-5 lg:col-start-2 xl:col-start-auto">
             <Card className="p-5">
@@ -266,7 +296,7 @@ export default function LoginPage() {
                   audit.map((item) => (
                     <div key={`${item.role}-${item.id}-${item.at}`} className="rounded-lg border border-white/10 bg-white/[0.03] p-3">
                       <p className="text-sm font-black capitalize text-white">{item.role}</p>
-                      <p className="truncate text-xs text-slate-400">{item.id}</p>
+                      <p title={item.id} className="truncate text-xs text-slate-400">{item.username || item.id}</p>
                     </div>
                   ))
                 ) : (
