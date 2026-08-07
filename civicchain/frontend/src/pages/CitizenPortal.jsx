@@ -14,6 +14,7 @@ import { getSession, isDemoMode } from "../services/auth";
 import { geocodeAddress } from "../services/geo";
 
 const LOCATION_RESOLUTION_ERROR = "We couldn't locate that address. Double-check it or enter coordinates as latitude, longitude.";
+const APPROXIMATE_LOCATION_NOTE = "We found an approximate location for this address — you can adjust precision by entering coordinates directly if needed.";
 
 const links = [
   { to: "/citizen", label: "Report", icon: Home },
@@ -44,15 +45,15 @@ function CitizenHome() {
   const [form, setForm] = useState({ title: "", description: "", location: "", category: "pothole" });
   const [bidMinutes, setBidMinutes] = useState("30");
   const [photoFile, setPhotoFile] = useState(null);
-  const [state, setState] = useState({ loading: false, error: "", saved: null });
+  const [state, setState] = useState({ loading: false, error: "", saved: null, approximate: false });
 
   const submit = async (event) => {
     event.preventDefault();
-    setState({ loading: true, error: "", saved: null });
+    setState({ loading: true, error: "", saved: null, approximate: false });
     try {
       const coordinates = await geocodeAddress(form.location);
       if (!coordinates.ok) {
-        setState({ loading: false, error: LOCATION_RESOLUTION_ERROR, saved: null });
+        setState({ loading: false, error: LOCATION_RESOLUTION_ERROR, saved: null, approximate: false });
         return;
       }
       const durationMinutes = Math.max(1, Number(bidMinutes) || 30);
@@ -68,9 +69,9 @@ function CitizenHome() {
       setForm({ title: "", description: "", location: "", category: "pothole" });
       setBidMinutes("30");
       setPhotoFile(null);
-      setState({ loading: false, error: "", saved });
+      setState({ loading: false, error: "", saved, approximate: coordinates.approximate === true });
     } catch (error) {
-      setState({ loading: false, error: error.message, saved: null });
+      setState({ loading: false, error: error.message, saved: null, approximate: false });
     }
   };
 
@@ -141,6 +142,7 @@ function CitizenHome() {
         </Field>
         {state.error && <p className="text-sm text-danger">{state.error}</p>}
         {state.saved && <p className="text-sm text-success">Complaint #{state.saved.id} submitted.</p>}
+        {state.saved && state.approximate && <p className="text-sm text-amber-300">{APPROXIMATE_LOCATION_NOTE}</p>}
         <button className="w-full rounded-lg bg-cyan px-5 py-3 font-black text-navy disabled:opacity-60" disabled={state.loading}>
           {state.loading ? "Submitting..." : "Submit Complaint"}
         </button>
