@@ -38,13 +38,13 @@ function RequireRole({ role, children }) {
   if (!session) return <Navigate to="/login" replace />;
   if (session.role !== role) return <Navigate to={pathForRole(session.role)} replace />;
 
-  // Contractors use their connected wallet as the bidding identity.
-  if (role === "contractor") {
+  // Citizens authenticate with a generated Citizen ID, not a wallet.
+  if (role !== "citizen") {
     if (!connected || !publicKey) {
       return (
         <div className="flex min-h-[60vh] flex-col items-center justify-center p-6 text-center">
           <h2 className="text-2xl font-black text-white">Wallet Connection Required</h2>
-          <p className="mt-2 text-slate-400">Please connect your screened Solana wallet to access the contractor workspace.</p>
+          <p className="mt-2 text-slate-400">Please connect your Solana wallet to access the {roles[role]?.label || role} workspace.</p>
           <div className="mt-6">
             <WalletMultiButton />
           </div>
