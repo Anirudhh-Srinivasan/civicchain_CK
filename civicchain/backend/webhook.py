@@ -132,6 +132,8 @@ class UsernameRequest(BaseModel):
     wallet_address: str
     username: str
     role: str
+    years_experience: int | None = None
+    past_project_references: str | None = None
 
 
 class RatingRequest(BaseModel):
@@ -283,11 +285,23 @@ def init_db() -> None:
                 wallet_address TEXT PRIMARY KEY,
                 username TEXT NOT NULL COLLATE NOCASE UNIQUE,
                 role TEXT NOT NULL,
+                years_experience INTEGER DEFAULT 0,
+                past_project_references TEXT,
+                credibility_score REAL DEFAULT 0,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
             """
         )
+        user_columns = {row["name"] for row in conn.execute("PRAGMA table_info(users)")}
+        user_migrations = {
+            "years_experience": "ALTER TABLE users ADD COLUMN years_experience INTEGER DEFAULT 0",
+            "past_project_references": "ALTER TABLE users ADD COLUMN past_project_references TEXT",
+            "credibility_score": "ALTER TABLE users ADD COLUMN credibility_score REAL DEFAULT 0",
+        }
+        for column, statement in user_migrations.items():
+            if column not in user_columns:
+                conn.execute(statement)
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS contractor_ratings (
@@ -421,15 +435,29 @@ def identity_for_wallet(conn: sqlite3.Connection, wallet_address: str | None) ->
             "ratings_count": 0,
         }
     user = conn.execute(
-        "SELECT wallet_address, username, role FROM users WHERE wallet_address = ?",
+        """SELECT wallet_address, username, role, years_experience,
+                  past_project_references, credibility_score
+           FROM users WHERE wallet_address = ?""",
         (wallet_address,),
     ).fetchone()
     return {
         "wallet_address": wallet_address,
         "username": user["username"] if user else None,
         "role": user["role"] if user else None,
+        "years_experience": int(user["years_experience"] or 0) if user else 0,
+        "past_project_references": user["past_project_references"] if user else None,
+        "credibility_score": round(float(user["credibility_score"] or 0), 1) if user else 0.0,
         **contractor_reputation(conn, wallet_address),
     }
+
+
+def calculate_credibility_score(years_experience: int, references: str | None) -> float:
+    # v1 placeholder: replace this self-reported formula with business-registry and
+    # professional background-check integrations in a future release.
+    reference_count = len([line for line in (references or "").splitlines() if line.strip()])
+    experience_points = min(years_experience, 20) / 20 * 70
+    reference_points = min(reference_count, 5) / 5 * 30
+    return round(experience_points + reference_points, 1)
 
 
 def parse_timestamp(value: str | None) -> datetime | None:
@@ -997,18 +1025,34 @@ def save_username(wallet_address: str, request: UsernameRequest) -> dict[str, An
         raise HTTPException(status_code=400, detail="Invalid Solana wallet address")
     username = validate_username(request.username)
     role = validate_profile_role(request.role)
+    years_experience = request.years_experience or 0
+    if years_experience < 0 or years_experience > 80:
+        raise HTTPException(status_code=400, detail="Years of experience must be between 0 and 80")
+    references = optional_text(request.past_project_references)
+    if references and len(references) > 4000:
+        raise HTTPException(status_code=400, detail="Past project references must be 4000 characters or fewer")
+    credibility_score = (
+        calculate_credibility_score(years_experience, references)
+        if role == "contractor" else 0.0
+    )
     with get_db() as conn:
         try:
             conn.execute(
                 """
-                INSERT INTO users (wallet_address, username, role)
-                VALUES (?, ?, ?)
+                INSERT INTO users (
+                    wallet_address, username, role, years_experience,
+                    past_project_references, credibility_score
+                )
+                VALUES (?, ?, ?, ?, ?, ?)
                 ON CONFLICT(wallet_address) DO UPDATE SET
                     username = excluded.username,
                     role = excluded.role,
+                    years_experience = excluded.years_experience,
+                    past_project_references = excluded.past_project_references,
+                    credibility_score = excluded.credibility_score,
                     updated_at = CURRENT_TIMESTAMP
                 """,
-                (wallet_address, username, role),
+                (wallet_address, username, role, years_experience, references, credibility_score),
             )
         except sqlite3.IntegrityError as exc:
             raise HTTPException(
@@ -1016,6 +1060,19 @@ def save_username(wallet_address: str, request: UsernameRequest) -> dict[str, An
                 detail="That username is already taken. Please try another",
             ) from exc
         return identity_for_wallet(conn, wallet_address)
+
+
+@app.get("/contractors")
+def list_contractors(min_credibility_score: float = 0) -> list[dict[str, Any]]:
+    init_db()
+    with get_db() as conn:
+        rows = conn.execute(
+            """SELECT wallet_address FROM users
+               WHERE role = 'contractor' AND credibility_score >= ?
+               ORDER BY credibility_score DESC, username COLLATE NOCASE""",
+            (max(0, min_credibility_score),),
+        ).fetchall()
+        return [identity_for_wallet(conn, row["wallet_address"]) for row in rows]
 
 
 @app.post("/webhook")

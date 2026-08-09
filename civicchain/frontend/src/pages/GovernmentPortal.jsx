@@ -1,7 +1,7 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link, Route, Routes, useParams } from "react-router-dom";
 import { WalletMultiButton } from "@solana/wallet-adapter-react-ui";
-import { AlertTriangle, BarChart3, Clock3, Coins, FileSearch, Map, Settings, Table2 } from "lucide-react";
+import { AlertTriangle, BarChart3, Clock3, Coins, FileSearch, HardHat, Map, Settings, Table2 } from "lucide-react";
 import ComplaintMap from "../components/ComplaintMap";
 import PortalNav from "../components/PortalNav";
 import SessionBanner from "../components/SessionBanner";
@@ -11,13 +11,14 @@ import { Reputation } from "../components/ContractorRating";
 import { Card, EmptyState, ErrorState, LoadingState, StatusBadge, inputClass } from "../components/ui";
 import { DetailView, useComplaint, useComplaints } from "./CitizenPortal";
 import { getSession } from "../services/auth";
-import { releasePayment, resolveDispute } from "../services/api";
+import { getContractors, releasePayment, resolveDispute } from "../services/api";
 
 const links = [
   { to: "/government", label: "Overview", icon: BarChart3 },
   { to: "/government/table", label: "Complaints", icon: Table2 },
   { to: "/government/map", label: "Map", icon: Map },
   { to: "/government/funds", label: "Funds", icon: Coins },
+  { to: "/government/contractors", label: "Contractors", icon: HardHat },
   { to: "/government/profile", label: "Profile", icon: Settings },
 ];
 
@@ -34,10 +35,62 @@ export default function GovernmentPortal() {
         <Route path="table" element={<ComplaintsTable />} />
         <Route path="map" element={<GovMap />} />
         <Route path="funds" element={<Funds />} />
+        <Route path="contractors" element={<Contractors />} />
         <Route path="profile" element={<ProfileSettings role="government" />} />
         <Route path="complaints/:id" element={<GovDetail />} />
       </Routes>
     </div>
+  );
+}
+
+function Contractors() {
+  const [contractors, setContractors] = useState([]);
+  const [minimum, setMinimum] = useState("0");
+  const [sortDirection, setSortDirection] = useState("desc");
+  const [state, setState] = useState({ loading: true, error: "" });
+
+  useEffect(() => {
+    let active = true;
+    getContractors(Number(minimum) || 0)
+      .then((data) => { if (active) { setContractors(data); setState({ loading: false, error: "" }); } })
+      .catch((error) => { if (active) setState({ loading: false, error: error.message }); });
+    return () => { active = false; };
+  }, [minimum]);
+
+  const sorted = useMemo(() => [...contractors].sort((a, b) => (
+    sortDirection === "desc"
+      ? b.credibility_score - a.credibility_score
+      : a.credibility_score - b.credibility_score
+  )), [contractors, sortDirection]);
+
+  if (state.loading) return <LoadingState label="Loading contractors" />;
+  if (state.error) return <ErrorState message={state.error} />;
+  return (
+    <Card className="overflow-hidden">
+      <div className="grid gap-3 border-b border-white/10 p-4 sm:grid-cols-2">
+        <input className={inputClass} type="number" min="0" max="100" step="1" value={minimum} onChange={(event) => setMinimum(event.target.value)} placeholder="Minimum credibility score" />
+        <select className={inputClass} value={sortDirection} onChange={(event) => setSortDirection(event.target.value)}>
+          <option value="desc">Highest credibility first</option>
+          <option value="asc">Lowest credibility first</option>
+        </select>
+      </div>
+      {!sorted.length ? <div className="p-6"><EmptyState title="No matching contractors" text="Adjust the minimum score or wait for contractor registrations." /></div> : (
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[720px] text-left text-sm">
+            <thead className="bg-white/[0.04] text-xs uppercase tracking-widest text-slate-400"><tr><th className="px-4 py-3">Contractor</th><th className="px-4 py-3">Experience</th><th className="px-4 py-3">Credibility</th><th className="px-4 py-3">References</th><th className="px-4 py-3">Rating</th></tr></thead>
+            <tbody>{sorted.map((contractor) => (
+              <tr key={contractor.wallet_address} className="border-t border-white/10">
+                <td className="px-4 py-4"><UserIdentity identity={contractor} walletAddress={contractor.wallet_address} /></td>
+                <td className="px-4 py-4 text-slate-300">{contractor.years_experience} years</td>
+                <td className="px-4 py-4 font-black text-cyan">{contractor.credibility_score.toFixed(1)}/100</td>
+                <td className="max-w-sm whitespace-pre-wrap px-4 py-4 text-slate-300">{contractor.past_project_references || "None supplied"}</td>
+                <td className="px-4 py-4"><Reputation identity={contractor} /></td>
+              </tr>
+            ))}</tbody>
+          </table>
+        </div>
+      )}
+    </Card>
   );
 }
 

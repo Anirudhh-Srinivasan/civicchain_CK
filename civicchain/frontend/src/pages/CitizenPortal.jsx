@@ -4,6 +4,7 @@ import { WalletMultiButton } from "@solana/wallet-adapter-react-ui";
 import { AlertTriangle, Camera, Clock3, FileText, Home, Map, MapPin, Send } from "lucide-react";
 import ComplaintCard from "../components/ComplaintCard";
 import ComplaintMap from "../components/ComplaintMap";
+import LocationPicker from "../components/LocationPicker";
 import PortalNav from "../components/PortalNav";
 import SessionBanner from "../components/SessionBanner";
 import ContractorRating, { Reputation } from "../components/ContractorRating";
@@ -42,7 +43,7 @@ export default function CitizenPortal() {
 
 function CitizenHome() {
   const session = getSession();
-  const [form, setForm] = useState({ title: "", description: "", location: "", category: "pothole" });
+  const [form, setForm] = useState({ title: "", description: "", location: "", category: "pothole", otherCategory: "", latitude: null, longitude: null });
   const [bidMinutes, setBidMinutes] = useState("30");
   const [photoFile, setPhotoFile] = useState(null);
   const [state, setState] = useState({ loading: false, error: "", saved: null, approximate: false });
@@ -51,7 +52,9 @@ function CitizenHome() {
     event.preventDefault();
     setState({ loading: true, error: "", saved: null, approximate: false });
     try {
-      const coordinates = await geocodeAddress(form.location);
+      const coordinates = Number.isFinite(form.latitude) && Number.isFinite(form.longitude)
+        ? { ok: true, latitude: form.latitude, longitude: form.longitude, source: "map" }
+        : await geocodeAddress(form.location);
       if (!coordinates.ok) {
         setState({ loading: false, error: LOCATION_RESOLUTION_ERROR, saved: null, approximate: false });
         return;
@@ -60,13 +63,14 @@ function CitizenHome() {
       const bidDeadline = new Date(Date.now() + durationMinutes * 60 * 1000).toISOString();
       const saved = await createComplaint({
         ...form,
+        category: form.category === "other" ? form.otherCategory.trim() : form.category,
         latitude: coordinates.latitude,
         longitude: coordinates.longitude,
         citizen_pubkey: session?.id || null,
         bid_deadline: bidDeadline,
         photo: photoFile,
       });
-      setForm({ title: "", description: "", location: "", category: "pothole" });
+      setForm({ title: "", description: "", location: "", category: "pothole", otherCategory: "", latitude: null, longitude: null });
       setBidMinutes("30");
       setPhotoFile(null);
       setState({ loading: false, error: "", saved, approximate: coordinates.approximate === true });
@@ -102,9 +106,21 @@ function CitizenHome() {
               required
               placeholder="Example: 12 Main Road, near Anna Nagar Tower, Chennai"
               value={form.location}
-              onChange={(e) => setForm({ ...form, location: e.target.value })}
+              onChange={(e) => setForm({ ...form, location: e.target.value, latitude: null, longitude: null })}
             />
           </div>
+        </Field>
+        <Field label="Pinpoint on map">
+          <LocationPicker
+            latitude={form.latitude}
+            longitude={form.longitude}
+            onSelect={({ latitude, longitude }) => setForm({
+              ...form,
+              latitude,
+              longitude,
+              location: `${latitude.toFixed(6)}, ${longitude.toFixed(6)}`,
+            })}
+          />
         </Field>
         <Field label="Category">
           <select className={inputClass} value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })}>
@@ -113,8 +129,21 @@ function CitizenHome() {
             <option value="garbage">Garbage</option>
             <option value="streetlight">Streetlight</option>
             <option value="water leak">Water leak</option>
+            <option value="other">Other</option>
           </select>
         </Field>
+        {form.category === "other" && (
+          <Field label="Describe issue type">
+            <input
+              className={inputClass}
+              maxLength="100"
+              placeholder="Example: damaged public bench"
+              required
+              value={form.otherCategory}
+              onChange={(e) => setForm({ ...form, otherCategory: e.target.value })}
+            />
+          </Field>
+        )}
         <Field label="Contractor bidding window">
           <div className="relative">
             <Clock3 className="pointer-events-none absolute left-3 top-3.5 h-4 w-4 text-cyan" />
