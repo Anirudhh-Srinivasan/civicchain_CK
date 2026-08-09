@@ -25,13 +25,24 @@ export async function getUserProfile(walletAddress) {
   }
 }
 
-export async function saveUsername(walletAddress, username, role) {
+export async function saveUsername(walletAddress, username, role, contractorDetails = {}) {
   try {
     const response = await api.put(`/users/${walletAddress}/username`, {
       wallet_address: walletAddress,
       username,
       role,
+      years_experience: contractorDetails.years_experience,
+      past_project_references: contractorDetails.past_project_references,
     });
+    return response.data;
+  } catch (error) {
+    throw new Error(apiMessage(error));
+  }
+}
+
+export async function getContractors(minCredibilityScore = 0) {
+  try {
+    const response = await api.get("/contractors", { params: { min_credibility_score: minCredibilityScore } });
     return response.data;
   } catch (error) {
     throw new Error(apiMessage(error));

@@ -10,16 +10,25 @@ export default function ProfileSettings({ role }) {
   const [username, setUsername] = useState(initial?.username || "");
   const [state, setState] = useState({ loading: false, error: "", saved: "" });
   const [profile, setProfile] = useState(null);
+  const [yearsExperience, setYearsExperience] = useState("0");
+  const [pastProjectReferences, setPastProjectReferences] = useState("");
 
   useEffect(() => {
-    if (initial?.id) getUserProfile(initial.id).then(setProfile).catch(() => {});
+    if (initial?.id) getUserProfile(initial.id).then((loaded) => {
+      setProfile(loaded);
+      setYearsExperience(String(loaded?.years_experience || 0));
+      setPastProjectReferences(loaded?.past_project_references || "");
+    }).catch(() => {});
   }, [initial?.id]);
 
   const submit = async (event) => {
     event.preventDefault();
     setState({ loading: true, error: "", saved: "" });
     try {
-      const profile = await saveUsername(session.id, username, role);
+      const profile = await saveUsername(session.id, username, role, {
+        years_experience: Number(yearsExperience),
+        past_project_references: pastProjectReferences,
+      });
       setProfile(profile);
       setSession(updateSessionProfile(profile));
       setUsername(profile.username);
@@ -41,9 +50,20 @@ export default function ProfileSettings({ role }) {
           <input className={`${inputClass} text-slate-400`} readOnly value={session?.id || ""} />
         </Field>
         {role === "contractor" && (
+          <>
+            <Field label="Years of experience">
+              <input className={inputClass} type="number" min="0" max="80" required value={yearsExperience} onChange={(event) => setYearsExperience(event.target.value)} />
+            </Field>
+            <Field label="Past project references">
+              <textarea className={inputClass} rows="5" maxLength="4000" placeholder="One project name, description, or link per line" value={pastProjectReferences} onChange={(event) => setPastProjectReferences(event.target.value)} />
+            </Field>
+          </>
+        )}
+        {role === "contractor" && (
           <div className="rounded-lg border border-white/10 bg-white/[0.03] p-4 text-sm text-slate-300">
             <p className="font-bold text-white">Contractor reputation</p>
             <p className="mt-2"><Reputation identity={profile} /></p>
+            <p className="mt-2 font-bold text-cyan">Credibility score: {profile?.credibility_score?.toFixed?.(1) || "0.0"}/100</p>
           </div>
         )}
         {state.error && <p className="text-sm font-bold text-danger">{state.error}</p>}

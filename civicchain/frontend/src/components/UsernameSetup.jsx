@@ -4,13 +4,18 @@ import { saveUsername } from "../services/api";
 
 export default function UsernameSetup({ walletAddress, role, onComplete, title = "Choose your username" }) {
   const [username, setUsername] = useState("");
+  const [yearsExperience, setYearsExperience] = useState("0");
+  const [pastProjectReferences, setPastProjectReferences] = useState("");
   const [state, setState] = useState({ loading: false, error: "" });
 
   const submit = async (event) => {
     event.preventDefault();
     setState({ loading: true, error: "" });
     try {
-      const profile = await saveUsername(walletAddress, username, role);
+      const profile = await saveUsername(walletAddress, username, role, {
+        years_experience: Number(yearsExperience),
+        past_project_references: pastProjectReferences,
+      });
       setState({ loading: false, error: "" });
       onComplete(profile);
     } catch (error) {
@@ -44,6 +49,16 @@ export default function UsernameSetup({ walletAddress, role, onComplete, title =
             }}
           />
         </Field>
+        {role === "contractor" && (
+          <>
+            <Field label="Years of experience">
+              <input className={inputClass} type="number" min="0" max="80" required value={yearsExperience} onChange={(event) => setYearsExperience(event.target.value)} />
+            </Field>
+            <Field label="Past project references">
+              <textarea className={inputClass} rows="4" maxLength="4000" placeholder="One project name, description, or link per line" value={pastProjectReferences} onChange={(event) => setPastProjectReferences(event.target.value)} />
+            </Field>
+          </>
+        )}
         <p className="text-xs text-slate-500">3–24 characters; letters, numbers, underscores, and hyphens only.</p>
         <p className="break-all text-xs text-slate-500">Wallet: {walletAddress}</p>
         {state.error && <p className="rounded-lg border border-danger/30 bg-danger/10 p-3 text-sm font-bold text-danger">{state.error}</p>}

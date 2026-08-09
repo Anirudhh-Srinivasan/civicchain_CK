@@ -75,6 +75,23 @@ class CivicFeatureTests(unittest.TestCase):
             )
         self.assertEqual(raised.exception.status_code, 409)
 
+    def test_contractor_credibility_is_computed_and_listed(self) -> None:
+        contractor = wallet(5)
+        profile = webhook.save_username(
+            contractor,
+            webhook.UsernameRequest(
+                wallet_address=contractor,
+                username="ExperiencedBuilder",
+                role="contractor",
+                years_experience=10,
+                past_project_references="https://example.com/project-one\nBridge repair project",
+            ),
+        )
+        self.assertEqual(profile["years_experience"], 10)
+        self.assertEqual(profile["credibility_score"], 47.0)
+        self.assertEqual(webhook.list_contractors(45)[0]["wallet_address"], contractor)
+        self.assertEqual(webhook.list_contractors(50), [])
+
     def test_one_rating_per_citizen_and_job(self) -> None:
         updated = webhook.rate_contractor(
             self.complaint_id,
